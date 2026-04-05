@@ -1,4 +1,5 @@
 import re
+import threading
 from datetime import datetime
 from flask import Flask, request, jsonify
 from playwright.sync_api import sync_playwright
@@ -58,13 +59,11 @@ def consultar_envigado(page, placa):
 def consultar_sabaneta(page, placa):
     url = "https://transitosabaneta.utsetsa.com/#/impuesto-local"
     page.goto(url, wait_until="domcontentloaded", timeout=30000)
-    
-    # Esperar que el campo de placa esté disponible
+
     page.locator("#placa").wait_for(state="visible", timeout=15000)
     page.locator("#placa").fill(placa)
     page.get_by_role("button", name="Buscar").click()
 
-    # Esperar respuesta
     page.wait_for_timeout(20000)
 
     texto_pagina = page.inner_text("body")
@@ -118,6 +117,7 @@ def consultar_sabaneta(page, placa):
                 pass
 
     return registros, total
+
 
 def consultar_itagui(page, placa):
     url = "https://movilidad.transitoitagui.gov.co/portal-servicios/#/impuesto-local"
@@ -187,6 +187,11 @@ def consultar_bello(page, placa):
     url = "https://serviciosdigitales.movilidadavanzadabello.com.co/portal-servicios/#/public"
     page.goto(url, wait_until="domcontentloaded", timeout=60000)
 
+    # Esperar que el contenido dinámico cargue
+    page.wait_for_function("""() => {
+        return document.querySelectorAll('input[type="search"]').length > 0;
+    }""", timeout=30000)
+
     try:
         page.get_by_role("button", name="Close").click(timeout=5000)
     except:
@@ -200,22 +205,12 @@ def consultar_bello(page, placa):
     except:
         return [], 0
 
-    #page.wait_for_function("""() => {
+    page.wait_for_function("""() => {
         const texto = document.body.innerText;
         return texto.includes('Total a pagar') ||
                texto.includes('paz y salvo') ||
                texto.includes('No se encontraron registros');
     }""", timeout=30000)
-    
-     page.wait_for_function("""() => {
-        return document.querySelectorAll('input[type="search"]').length > 0;
-        }""", timeout=30000)
-
-        try:
-            page.get_by_role("button", name="Close").click(timeout=5000)
-        except:
-            pass
-    
 
     texto_pagina = page.inner_text("body")
 
@@ -254,7 +249,6 @@ MUNICIPIOS = {
     "bello":    consultar_bello,
 }
 
-import threading
 
 @app.route("/consultar", methods=["GET"])
 def consultar():
@@ -307,7 +301,7 @@ def consultar():
 
     hilo = threading.Thread(target=ejecutar)
     hilo.start()
-    hilo.join(timeout=110)  # espera máximo 110 segundos
+    hilo.join(timeout=110)
 
     if hilo.is_alive():
         return jsonify({"error": "La consulta tardó demasiado. Intenta de nuevo."}), 504
@@ -334,58 +328,7 @@ def consultar():
         "total":     resultado.get('total', 0),
         "sin_deuda": resultado.get('total', 0) == 0
     })
-@app.route("/diagnostico-sabaneta", methods=["GET"])
-def diagnostico_sabaneta():
-    placa = request.args.get("placa", "EKO358").upper().strip()
-    log = []
-    try:
-        with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(
-                headless=True,
-                args=[
-                    "--no-sandbox",
-                    "--disable-dev-shm-usage",
-                    "--disable-gpu",
-                    "--single-process",
-                    "--no-zygote",
-                    "--disable-setuid-sandbox"
-                ]
-            )
-            context = browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            )
-            page = context.new_page()
-
-            log.append("1. Browser abierto")
-
-            page.goto("https://transitosabaneta.utsetsa.com/#/impuesto-local",
-                      wait_until="domcontentloaded", timeout=30000)
-            log.append("2. Página cargada")
-
-            page.locator("#placa").wait_for(state="visible", timeout=15000)
-            log.append("3. Campo #placa visible")
-
-            page.locator("#placa").fill(placa)
-            page.get_by_role("button", name="Buscar").click()
-            log.append("4. Búsqueda iniciada")
-
-            page.wait_for_timeout(20000)
-            log.append("5. Espera completada")
-
-            texto = page.inner_text("body")
-            log.append(f"6. Texto obtenido ({len(texto)} chars)")
-            log.append(f"7. ¿Vigencias pendientes? {'Vigencias pendientes' in texto}")
-            log.append(f"8. ¿Último pago realizado? {'Último pago realizado' in texto}")
-            log.append(f"9. Primeros 500 chars: {texto[:500]}")
-
-            context.close()
-            browser.close()
-
-    except Exception as e:
-        log.append(f"ERROR: {str(e)}")
-
-    return jsonify({"log": log})
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    app.run(host="0.0.0.0", port=8080)
