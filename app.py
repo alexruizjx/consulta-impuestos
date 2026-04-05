@@ -308,6 +308,58 @@ def consultar():
             }), 503
         return jsonify({"error": str(e)}), 500
 
+@app.route("/diagnostico-sabaneta", methods=["GET"])
+def diagnostico_sabaneta():
+    placa = request.args.get("placa", "EKO358").upper().strip()
+    log = []
+    try:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(
+                headless=True,
+                args=[
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                    "--single-process",
+                    "--no-zygote",
+                    "--disable-setuid-sandbox"
+                ]
+            )
+            context = browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            )
+            page = context.new_page()
+
+            log.append("1. Browser abierto")
+
+            page.goto("https://transitosabaneta.utsetsa.com/#/impuesto-local",
+                      wait_until="domcontentloaded", timeout=30000)
+            log.append("2. Página cargada")
+
+            page.locator("#placa").wait_for(state="visible", timeout=15000)
+            log.append("3. Campo #placa visible")
+
+            page.locator("#placa").fill(placa)
+            page.get_by_role("button", name="Buscar").click()
+            log.append("4. Búsqueda iniciada")
+
+            page.wait_for_timeout(20000)
+            log.append("5. Espera completada")
+
+            texto = page.inner_text("body")
+            log.append(f"6. Texto obtenido ({len(texto)} chars)")
+            log.append(f"7. ¿Vigencias pendientes? {'Vigencias pendientes' in texto}")
+            log.append(f"8. ¿Último pago realizado? {'Último pago realizado' in texto}")
+            log.append(f"9. Primeros 500 chars: {texto[:500]}")
+
+            context.close()
+            browser.close()
+
+    except Exception as e:
+        log.append(f"ERROR: {str(e)}")
+
+    return jsonify({"log": log})
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
