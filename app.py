@@ -5,55 +5,24 @@ from playwright.sync_api import sync_playwright
 
 app = Flask(__name__)
 
-TIMEOUT = 30000
+TIMEOUT = 20000
 MSG_NO_MATRICULADO = "El vehiculo no se encuentra matriculado en la Secretaria de Movilidad"
 AÑO_ACTUAL = str(datetime.now().year)
+
+
+@app.route("/")
+def home():
+    return "API funcionando", 200
+
 
 def bloquear_recursos(page):
     page.route("**/*", lambda route: route.abort()
                if route.request.resource_type in ["image", "font", "media"]
                else route.continue_())
 
-# =========================
-# ENVIGADO
-# =========================
-def consultar_envigado(page, placa):
-    page.goto("https://movilidad.envigado.gov.co/portal-servicios/#/impuesto-local",
-              wait_until="domcontentloaded")
-
-    page.get_by_role("textbox", name="Placa").fill(placa)
-    page.get_by_role("button", name="Buscar").click()
-
-    page.wait_for_function("""() => {
-        return document.querySelector('#tablaCollapseVigencias') ||
-               document.body.innerText.includes('no se encuentra matriculado');
-    }""", timeout=TIMEOUT)
-
-    if MSG_NO_MATRICULADO in page.inner_text("body"):
-        return [], 0
-
-    registros = []
-    filas = page.locator("#tablaCollapseVigencias tr").all()
-
-    for fila in filas:
-        texto = fila.inner_text()
-        año = re.search(r'\b(20\d{2})\b', texto)
-        montos = re.findall(r'\$\s*[\d.]+', texto)
-
-        if año and montos:
-            valor = int(montos[-1].replace("$", "").replace(".", "").strip())
-            registros.append({
-                "vigencia": año.group(),
-                "estado": "Pendiente",
-                "total_vigencia": valor
-            })
-
-    total = sum(r["total_vigencia"] for r in registros)
-    return registros, total
-
 
 # =========================
-# SABANETA (CORREGIDO)
+# SABANETA (OPTIMIZADO)
 # =========================
 def consultar_sabaneta(page, placa):
     page.goto("https://transitosabaneta.utsetsa.com/#/impuesto-local",
@@ -71,10 +40,7 @@ def consultar_sabaneta(page, placa):
 
     texto = page.inner_text("body")
 
-    if MSG_NO_MATRICULADO in texto:
-        return [], 0
-
-    if "Vigencias pendientes" not in texto:
+    if MSG_NO_MATRICULADO in texto or "Vigencias pendientes" not in texto:
         return [], 0
 
     registros = []
@@ -98,52 +64,7 @@ def consultar_sabaneta(page, placa):
 
 
 # =========================
-# ITAGUI
-# =========================
-def consultar_itagui(page, placa):
-    page.goto("https://movilidad.transitoitagui.gov.co/portal-servicios/#/impuesto-local",
-              wait_until="domcontentloaded")
-
-    page.get_by_role("textbox", name="Placa").fill(placa)
-    page.get_by_role("button", name="Buscar").click()
-
-    page.wait_for_function("""() => {
-        const t = document.body.innerText;
-        return t.includes('Vigencias pendientes') ||
-               t.includes('Último pago realizado') ||
-               t.includes('no se encuentra matriculado');
-    }""", timeout=TIMEOUT)
-
-    texto = page.inner_text("body")
-
-    if MSG_NO_MATRICULADO in texto:
-        return [], 0
-
-    if "Vigencias pendientes" not in texto:
-        return [], 0
-
-    registros = []
-    filas = page.locator("#tablaCollapseVigencias tr").all()
-
-    for fila in filas:
-        texto_fila = fila.inner_text()
-        año = re.search(r'\b(20\d{2})\b', texto_fila)
-        montos = re.findall(r'COP\s*[\d.]+', texto_fila)
-
-        if año and montos:
-            valor = int(montos[-1].replace("COP", "").replace(".", "").strip())
-            registros.append({
-                "vigencia": año.group(),
-                "estado": "Pendiente",
-                "total_vigencia": valor
-            })
-
-    total = sum(r["total_vigencia"] for r in registros)
-    return registros, total
-
-
-# =========================
-# BELLO (CORREGIDO)
+# BELLO (OPTIMIZADO)
 # =========================
 def consultar_bello(page, placa):
     page.goto("https://serviciosdigitales.movilidadavanzadabello.com.co/portal-servicios/#/public",
@@ -192,9 +113,7 @@ def consultar_bello(page, placa):
 
 
 MUNICIPIOS = {
-    "envigado": consultar_envigado,
     "sabaneta": consultar_sabaneta,
-    "itagui": consultar_itagui,
     "bello": consultar_bello,
 }
 
