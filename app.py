@@ -207,14 +207,14 @@ def consultar_bello(page, placa):
                texto.includes('No se encontraron registros');
     }""", timeout=30000)
     
-    page.wait_for_function("""() => {
-    return document.querySelectorAll('input[type="search"]').length > 0;
-    }""", timeout=30000)
+     page.wait_for_function("""() => {
+        return document.querySelectorAll('input[type="search"]').length > 0;
+        }""", timeout=30000)
 
-    try:
-      page.get_by_role("button", name="Close").click(timeout=5000)
-    except:
-        pass
+        try:
+            page.get_by_role("button", name="Close").click(timeout=5000)
+        except:
+            pass
     
 
     texto_pagina = page.inner_text("body")
