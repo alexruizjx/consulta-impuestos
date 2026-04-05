@@ -200,12 +200,22 @@ def consultar_bello(page, placa):
     except:
         return [], 0
 
-    page.wait_for_function("""() => {
+    #page.wait_for_function("""() => {
         const texto = document.body.innerText;
         return texto.includes('Total a pagar') ||
                texto.includes('paz y salvo') ||
                texto.includes('No se encontraron registros');
     }""", timeout=30000)
+    
+    page.wait_for_function("""() => {
+    return document.querySelectorAll('input[type="search"]').length > 0;
+    }""", timeout=30000)
+
+    try:
+      page.get_by_role("button", name="Close").click(timeout=5000)
+    except:
+        pass
+    
 
     texto_pagina = page.inner_text("body")
 
