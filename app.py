@@ -60,7 +60,7 @@ def consultar_sabaneta(page, placa):
     page.goto(url, wait_until="networkidle", timeout=30000)
     page.locator("#placa").fill(placa)
     page.get_by_role("button", name="Buscar").click()
-    page.wait_for_timeout(15000)
+    page.wait_for_timeout(30000)
 
     texto_pagina = page.inner_text("body")
 
@@ -189,7 +189,7 @@ def consultar_bello(page, placa):
     page.get_by_role("button").nth(5).click()
 
     try:
-        page.wait_for_url("**/impuesto-local", timeout=6000)
+        page.wait_for_url("**/impuesto-local", timeout=15000)
     except:
         return [], 0
 
@@ -198,7 +198,7 @@ def consultar_bello(page, placa):
         return texto.includes('Total a pagar') ||
                texto.includes('paz y salvo') ||
                texto.includes('No se encontraron registros');
-    }""", timeout=15000)
+    }""", timeout=30000)
 
     texto_pagina = page.inner_text("body")
 
