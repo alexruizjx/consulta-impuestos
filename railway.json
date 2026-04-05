@@ -1,0 +1,8 @@
+{
+  "build": {
+    "builder": "NIXPACKS"
+  },
+  "deploy": {
+    "startCommand": "playwright install --with-deps && gunicorn app:app --timeout 180 --workers 2"
+  }
+}
