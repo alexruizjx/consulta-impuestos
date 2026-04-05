@@ -3,7 +3,7 @@ services:
     name: consulta-impuestos
     runtime: python
     buildCommand: pip install -r requirements.txt && python -m playwright install --with-deps chromium
-    startCommand: gunicorn app:app
+    startCommand: python app.py
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
