@@ -244,6 +244,8 @@ MUNICIPIOS = {
     "bello":    consultar_bello,
 }
 
+import threading
+
 @app.route("/consultar", methods=["GET"])
 def consultar():
     placa     = request.args.get("placa", "").upper().strip()
@@ -258,41 +260,50 @@ def consultar():
             "opciones": list(MUNICIPIOS.keys())
         }), 400
 
-    try:
-        with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(
-                headless=True,
-                args=[
-                    "--no-sandbox",
-                    "--disable-dev-shm-usage",
-                    "--disable-gpu",
-                    "--single-process",
-                    "--no-zygote",
-                    "--disable-setuid-sandbox"
-                ]
-            )
-            context = browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            )
-            page = context.new_page()
-            bloquear_recursos(page)
+    resultado = {}
+    error_container = {}
 
-            funcion = MUNICIPIOS[municipio]
-            registros, total = funcion(page, placa)
+    def ejecutar():
+        try:
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch(
+                    headless=True,
+                    args=[
+                        "--no-sandbox",
+                        "--disable-dev-shm-usage",
+                        "--disable-gpu",
+                        "--single-process",
+                        "--no-zygote",
+                        "--disable-setuid-sandbox"
+                    ]
+                )
+                context = browser.new_context(
+                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                )
+                page = context.new_page()
+                bloquear_recursos(page)
 
-            context.close()
-            browser.close()
+                funcion = MUNICIPIOS[municipio]
+                registros, total = funcion(page, placa)
 
-        return jsonify({
-            "placa":     placa,
-            "municipio": municipio,
-            "registros": registros,
-            "total":     total,
-            "sin_deuda": total == 0
-        })
+                context.close()
+                browser.close()
 
-    except Exception as e:
-        error = str(e).lower()
+                resultado['registros'] = registros
+                resultado['total'] = total
+
+        except Exception as e:
+            error_container['error'] = str(e)
+
+    hilo = threading.Thread(target=ejecutar)
+    hilo.start()
+    hilo.join(timeout=110)  # espera máximo 110 segundos
+
+    if hilo.is_alive():
+        return jsonify({"error": "La consulta tardó demasiado. Intenta de nuevo."}), 504
+
+    if error_container:
+        error = error_container['error'].lower()
         if any(x in error for x in [
             "net::err_internet_disconnected",
             "net::err_name_not_resolved",
@@ -300,14 +311,19 @@ def consultar():
             "net::err_connection_timed_out",
             "net::err_connection_reset",
             "net::err_aborted",
-            "timeout",
-            "page.goto"
         ]):
             return jsonify({
                 "error": f"No se pudo conectar al portal de {municipio}. Intenta más tarde."
             }), 503
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": error_container['error']}), 500
 
+    return jsonify({
+        "placa":     placa,
+        "municipio": municipio,
+        "registros": resultado.get('registros', []),
+        "total":     resultado.get('total', 0),
+        "sin_deuda": resultado.get('total', 0) == 0
+    })
 @app.route("/diagnostico-sabaneta", methods=["GET"])
 def diagnostico_sabaneta():
     placa = request.args.get("placa", "EKO358").upper().strip()
