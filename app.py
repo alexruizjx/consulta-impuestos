@@ -57,10 +57,15 @@ def consultar_envigado(page, placa):
 
 def consultar_sabaneta(page, placa):
     url = "https://transitosabaneta.utsetsa.com/#/impuesto-local"
-    page.goto(url, wait_until="networkidle", timeout=30000)
+    page.goto(url, wait_until="domcontentloaded", timeout=30000)
+    
+    # Esperar que el campo de placa esté disponible
+    page.locator("#placa").wait_for(state="visible", timeout=15000)
     page.locator("#placa").fill(placa)
     page.get_by_role("button", name="Buscar").click()
-    page.wait_for_timeout(30000)
+
+    # Esperar respuesta
+    page.wait_for_timeout(20000)
 
     texto_pagina = page.inner_text("body")
 
@@ -70,13 +75,16 @@ def consultar_sabaneta(page, placa):
     if 'Último pago realizado' in texto_pagina and 'Vigencias pendientes' not in texto_pagina:
         return [], 0
 
+    if 'Vigencias pendientes' not in texto_pagina:
+        return [], 0
+
     page.locator("#tablaCollapseVigencias").wait_for(state="visible", timeout=15000)
     checkbox = page.locator("#selectall")
     checkbox.wait_for(state="visible", timeout=15000)
     if checkbox.is_enabled():
         checkbox.check()
 
-    page.wait_for_timeout(3000)
+    page.wait_for_timeout(5000)
 
     spans_cop = page.locator("span.fs-16.ng-binding").all()
     total = 0
@@ -110,7 +118,6 @@ def consultar_sabaneta(page, placa):
                 pass
 
     return registros, total
-
 
 def consultar_itagui(page, placa):
     url = "https://movilidad.transitoitagui.gov.co/portal-servicios/#/impuesto-local"
