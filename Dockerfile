@@ -1,9 +1,12 @@
-FROM mcr.microsoft.com/playwright/python:v1.42.0-jammy
+FROM mcr.microsoft.com/playwright/python:v1.58.0-jammy
 
 WORKDIR /app
 
+COPY requirements.txt .
+RUN pip install -r requirements.txt
+
 COPY . .
 
-RUN pip install --no-cache-dir -r requirements.txt
+EXPOSE 8080
 
-CMD ["gunicorn", "app:app", "--bind", "0.0.0.0:8080", "--timeout", "180", "--workers", "2"]
+CMD ["gunicorn", "app:app", "--bind", "0.0.0.0:8080", "--timeout", "120", "--workers", "1"]
