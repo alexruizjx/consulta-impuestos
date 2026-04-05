@@ -187,7 +187,6 @@ def consultar_bello(page, placa):
     url = "https://serviciosdigitales.movilidadavanzadabello.com.co/portal-servicios/#/public"
     page.goto(url, wait_until="domcontentloaded", timeout=60000)
 
-    # Esperar que el contenido dinámico cargue
     page.wait_for_function("""() => {
         return document.querySelectorAll('input[type="search"]').length > 0;
     }""", timeout=30000)
@@ -205,20 +204,16 @@ def consultar_bello(page, placa):
     except:
         return [], 0
 
-    page.wait_for_function("""() => {
-        const texto = document.body.innerText;
-        return texto.includes('Total a pagar') ||
-               texto.includes('paz y salvo') ||
-               texto.includes('No se encontraron registros');
-    }""", timeout=30000)
+    # Esperar que cargue el contenido completo
+    page.wait_for_timeout(10000)
 
     texto_pagina = page.inner_text("body")
 
     if 'paz y salvo' in texto_pagina or 'No se encontraron registros' in texto_pagina:
         return [], 0
 
-    match_total = re.search(r'Total a pagar:\s*COP\s*([\d.]+)', texto_pagina)
-    total = int(match_total.group(1).replace('.', '')) if match_total else 0
+    if 'Vigencias pendientes' not in texto_pagina:
+        return [], 0
 
     registros = []
     tbodies = page.locator("tbody").all()
@@ -238,6 +233,13 @@ def consultar_bello(page, placa):
                 })
             except ValueError:
                 pass
+
+    # Intentar extraer total del texto, si no sumar vigencias
+    match_total = re.search(r'Total a pagar:\s*COP\s*([\d.]+)', texto_pagina)
+    if match_total:
+        total = int(match_total.group(1).replace('.', ''))
+    else:
+        total = sum(r['total_vigencia'] for r in registros)
 
     return registros, total
 
@@ -332,75 +334,6 @@ def consultar():
         "sin_deuda": resultado.get('total', 0) == 0
     })
 
-@app.route("/diagnostico-bello", methods=["GET"])
-def diagnostico_bello():
-    placa = request.args.get("placa", "LAU466").upper().strip()
-    log = []
-    error_container = {}
-
-    def ejecutar():
-        try:
-            with sync_playwright() as playwright:
-                browser = playwright.chromium.launch(
-                    headless=True,
-                    args=[
-                        "--no-sandbox",
-                        "--disable-dev-shm-usage",
-                        "--disable-gpu",
-                        "--single-process",
-                        "--no-zygote",
-                        "--disable-setuid-sandbox"
-                    ]
-                )
-                context = browser.new_context(
-                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-                )
-                page = context.new_page()
-                log.append("1. Browser abierto")
-
-                page.goto("https://serviciosdigitales.movilidadavanzadabello.com.co/portal-servicios/#/public",
-                          wait_until="domcontentloaded", timeout=60000)
-                log.append("2. Página cargada")
-                log.append(f"   URL actual: {page.url}")
-
-                inputs = page.locator("input[type='search']").all()
-                log.append(f"3. Inputs search encontrados: {len(inputs)}")
-
-                try:
-                    page.get_by_role("button", name="Close").click(timeout=5000)
-                    log.append("4. Modal cerrado")
-                except:
-                    log.append("4. No había modal")
-
-                page.get_by_role("searchbox", name="Placa").nth(3).fill(placa)
-                log.append("5. Placa ingresada")
-
-                page.get_by_role("button").nth(5).click()
-                log.append("6. Búsqueda iniciada")
-
-                try:
-                    page.wait_for_url("**/impuesto-local", timeout=15000)
-                    log.append(f"7. URL cambió a: {page.url}")
-                except:
-                    log.append(f"7. URL NO cambió, sigue en: {page.url}")
-
-                page.wait_for_timeout(5000)
-                texto = page.inner_text("body")
-                log.append(f"8. Texto obtenido ({len(texto)} chars)")
-                log.append(f"9. Primeros 500 chars: {texto[:500]}")
-
-                context.close()
-                browser.close()
-
-        except Exception as e:
-            error_container['error'] = str(e)
-            log.append(f"ERROR: {str(e)}")
-
-    hilo = threading.Thread(target=ejecutar)
-    hilo.start()
-    hilo.join(timeout=110)
-
-    return jsonify({"log": log, "error": error_container.get('error')})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
