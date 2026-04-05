@@ -332,6 +332,75 @@ def consultar():
         "sin_deuda": resultado.get('total', 0) == 0
     })
 
+@app.route("/diagnostico-bello", methods=["GET"])
+def diagnostico_bello():
+    placa = request.args.get("placa", "LAU466").upper().strip()
+    log = []
+    error_container = {}
+
+    def ejecutar():
+        try:
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch(
+                    headless=True,
+                    args=[
+                        "--no-sandbox",
+                        "--disable-dev-shm-usage",
+                        "--disable-gpu",
+                        "--single-process",
+                        "--no-zygote",
+                        "--disable-setuid-sandbox"
+                    ]
+                )
+                context = browser.new_context(
+                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                )
+                page = context.new_page()
+                log.append("1. Browser abierto")
+
+                page.goto("https://serviciosdigitales.movilidadavanzadabello.com.co/portal-servicios/#/public",
+                          wait_until="domcontentloaded", timeout=60000)
+                log.append("2. Página cargada")
+                log.append(f"   URL actual: {page.url}")
+
+                inputs = page.locator("input[type='search']").all()
+                log.append(f"3. Inputs search encontrados: {len(inputs)}")
+
+                try:
+                    page.get_by_role("button", name="Close").click(timeout=5000)
+                    log.append("4. Modal cerrado")
+                except:
+                    log.append("4. No había modal")
+
+                page.get_by_role("searchbox", name="Placa").nth(3).fill(placa)
+                log.append("5. Placa ingresada")
+
+                page.get_by_role("button").nth(5).click()
+                log.append("6. Búsqueda iniciada")
+
+                try:
+                    page.wait_for_url("**/impuesto-local", timeout=15000)
+                    log.append(f"7. URL cambió a: {page.url}")
+                except:
+                    log.append(f"7. URL NO cambió, sigue en: {page.url}")
+
+                page.wait_for_timeout(5000)
+                texto = page.inner_text("body")
+                log.append(f"8. Texto obtenido ({len(texto)} chars)")
+                log.append(f"9. Primeros 500 chars: {texto[:500]}")
+
+                context.close()
+                browser.close()
+
+        except Exception as e:
+            error_container['error'] = str(e)
+            log.append(f"ERROR: {str(e)}")
+
+    hilo = threading.Thread(target=ejecutar)
+    hilo.start()
+    hilo.join(timeout=110)
+
+    return jsonify({"log": log, "error": error_container.get('error')})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
