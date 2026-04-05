@@ -285,7 +285,10 @@ def consultar():
                     user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                 )
                 page = context.new_page()
-                bloquear_recursos(page)
+
+                # Bello y Sabaneta no bloquean recursos
+                if municipio not in ["bello", "sabaneta"]:
+                    bloquear_recursos(page)
 
                 funcion = MUNICIPIOS[municipio]
                 registros, total = funcion(page, placa)
@@ -298,37 +301,3 @@ def consultar():
 
         except Exception as e:
             error_container['error'] = str(e)
-
-    hilo = threading.Thread(target=ejecutar)
-    hilo.start()
-    hilo.join(timeout=110)
-
-    if hilo.is_alive():
-        return jsonify({"error": "La consulta tardó demasiado. Intenta de nuevo."}), 504
-
-    if error_container:
-        error = error_container['error'].lower()
-        if any(x in error for x in [
-            "net::err_internet_disconnected",
-            "net::err_name_not_resolved",
-            "net::err_connection_refused",
-            "net::err_connection_timed_out",
-            "net::err_connection_reset",
-            "net::err_aborted",
-        ]):
-            return jsonify({
-                "error": f"No se pudo conectar al portal de {municipio}. Intenta más tarde."
-            }), 503
-        return jsonify({"error": error_container['error']}), 500
-
-    return jsonify({
-        "placa":     placa,
-        "municipio": municipio,
-        "registros": resultado.get('registros', []),
-        "total":     resultado.get('total', 0),
-        "sin_deuda": resultado.get('total', 0) == 0
-    })
-
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080)
