@@ -1,4 +1,5 @@
 import re
+import traceback
 from datetime import datetime
 from flask import Flask, request, jsonify
 from playwright.sync_api import sync_playwright
@@ -7,14 +8,39 @@ app = Flask(__name__)
 
 TIMEOUT = 20000
 MSG_NO_MATRICULADO = "El vehiculo no se encuentra matriculado en la Secretaria de Movilidad"
-AÑO_ACTUAL = str(datetime.now().year)
 
 
+# =========================
+# HEALTHCHECK
+# =========================
 @app.route("/")
 def home():
     return "API funcionando", 200
 
 
+# =========================
+# TEST PLAYWRIGHT (CLAVE)
+# =========================
+@app.route("/test-playwright")
+def test_playwright():
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-dev-shm-usage"]
+            )
+            browser.close()
+        return jsonify({"status": "OK"})
+    except Exception as e:
+        return jsonify({
+            "error": str(e),
+            "trace": traceback.format_exc()
+        }), 500
+
+
+# =========================
+# BLOQUEAR RECURSOS
+# =========================
 def bloquear_recursos(page):
     page.route("**/*", lambda route: route.abort()
                if route.request.resource_type in ["image", "font", "media"]
@@ -22,7 +48,7 @@ def bloquear_recursos(page):
 
 
 # =========================
-# SABANETA (OPTIMIZADO)
+# SABANETA
 # =========================
 def consultar_sabaneta(page, placa):
     page.goto("https://transitosabaneta.utsetsa.com/#/impuesto-local",
@@ -64,7 +90,7 @@ def consultar_sabaneta(page, placa):
 
 
 # =========================
-# BELLO (OPTIMIZADO)
+# BELLO
 # =========================
 def consultar_bello(page, placa):
     page.goto("https://serviciosdigitales.movilidadavanzadabello.com.co/portal-servicios/#/public",
@@ -118,6 +144,9 @@ MUNICIPIOS = {
 }
 
 
+# =========================
+# ENDPOINT PRINCIPAL
+# =========================
 @app.route("/consultar", methods=["GET"])
 def consultar():
     placa = request.args.get("placa", "").upper().strip()
@@ -137,6 +166,8 @@ def consultar():
             page = context.new_page()
 
             page.set_default_timeout(TIMEOUT)
+            page.set_default_navigation_timeout(TIMEOUT)
+
             bloquear_recursos(page)
 
             registros, total = MUNICIPIOS[municipio](page, placa)
@@ -152,8 +183,11 @@ def consultar():
         })
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({
+            "error": str(e),
+            "trace": traceback.format_exc()
+        }), 500
 
 
 if __name__ == "__main__":
-    app.run()
+    app.run(host="0.0.0.0", port=5000)
