@@ -252,34 +252,29 @@ def consultar():
         }), 400
 
     try:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(
+                headless=True,
+                args=[
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                    "--single-process",
+                    "--no-zygote",
+                    "--disable-setuid-sandbox"
+                ]
+            )
+            context = browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            )
+            page = context.new_page()
+            bloquear_recursos(page)
 
+            funcion = MUNICIPIOS[municipio]
+            registros, total = funcion(page, placa)
 
-
-   with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(
-        headless=True,
-        args=[
-            "--no-sandbox",
-            "--disable-dev-shm-usage",
-            "--disable-gpu",
-            "--single-process",
-            "--no-zygote",
-            "--disable-setuid-sandbox",
-            "--disable-web-security"
-        ]
-    )
-    context = browser.new_context(
-        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    )
-    page = context.new_page()
-    bloquear_recursos(page)
-
-    funcion = MUNICIPIOS[municipio]
-    registros, total = funcion(page, placa)
-
-    context.close()
-    browser.close()
-        
+            context.close()
+            browser.close()
 
         return jsonify({
             "placa":     placa,
