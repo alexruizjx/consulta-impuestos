@@ -185,7 +185,7 @@ def consultar_itagui(page, placa):
 
 def consultar_bello(page, placa):
     url = "https://serviciosdigitales.movilidadavanzadabello.com.co/portal-servicios/#/public"
-    page.goto(url, wait_until="networkidle", timeout=60000)
+    page.goto(url, wait_until="domcontentloaded", timeout=60000)
 
     try:
         page.get_by_role("button", name="Close").click(timeout=5000)
