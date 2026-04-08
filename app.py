@@ -5,8 +5,6 @@ from flask import Flask, request, jsonify
 from playwright.sync_api import sync_playwright
 
 app = Flask(__name__)
-from flask_cors import CORS
-CORS(app)
 
 TIMEOUT = 10000
 MSG_NO_MATRICULADO = "El vehiculo no se encuentra matriculado en la Secretaria de Movilidad"
@@ -57,6 +55,7 @@ def consultar_envigado(page, placa):
     total = sum(r['total_vigencia'] for r in registros)
     return registros, total
 
+
 def consultar_sabaneta(page, placa):
     url = "https://transitosabaneta.utsetsa.com/#/impuesto-local"
     page.goto(url, wait_until="domcontentloaded", timeout=30000)
@@ -65,14 +64,7 @@ def consultar_sabaneta(page, placa):
     page.locator("#placa").fill(placa)
     page.get_by_role("button", name="Buscar").click()
 
-    # Espera inteligente en lugar de tiempo fijo
-    page.wait_for_function("""() => {
-        const texto = document.body.innerText;
-        const noMatriculado = texto.includes('El vehiculo no se encuentra matriculado en la Secretaria de Movilidad');
-        const conDeuda = texto.includes('Vigencias pendientes');
-        const pazYSalvo = texto.includes('Último pago realizado') && !texto.includes('Vigencias pendientes');
-        return noMatriculado || conDeuda || pazYSalvo;
-    }""", timeout=30000)
+    page.wait_for_timeout(20000)
 
     texto_pagina = page.inner_text("body")
 
@@ -125,7 +117,6 @@ def consultar_sabaneta(page, placa):
                 pass
 
     return registros, total
-
 
 
 def consultar_itagui(page, placa):
