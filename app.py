@@ -1,4 +1,5 @@
 import re
+import time
 import requests
 import threading
 from datetime import datetime
@@ -263,67 +264,62 @@ def _parsear_emtrasur(data: list):
     return registros, total
 
 
+TWOCAPTCHA_API_KEY = "47a18b883a00d513b2c78b0ac2cd0f00"
+EMTRASUR_SITE_KEY  = "6LfGbysqAAAAADdADxFvOlCJXvuKvJzjuioYSoJP"
+EMTRASUR_URL       = "https://sistematizacion.emtrasur.com.co/"
+
+
+def resolver_recaptcha_2captcha(site_key: str, page_url: str) -> str:
+    resp = requests.post("https://2captcha.com/in.php", data={
+        "key":       TWOCAPTCHA_API_KEY,
+        "method":    "userrecaptcha",
+        "googlekey": site_key,
+        "pageurl":   page_url,
+        "json":      1,
+    }, timeout=15)
+
+    data = resp.json()
+    if data.get("status") != 1:
+        raise Exception(f"2captcha error al enviar: {data.get('request')}")
+
+    captcha_id = data["request"]
+
+    for _ in range(24):
+        time.sleep(5)
+        resultado = requests.get("https://2captcha.com/res.php", params={
+            "key":    TWOCAPTCHA_API_KEY,
+            "action": "get",
+            "id":     captcha_id,
+            "json":   1,
+        }, timeout=10).json()
+
+        if resultado.get("status") == 1:
+            return resultado["request"]
+
+        if resultado.get("request") not in ("CAPCHA_NOT_READY", "CAPTCHA_NOT_READY"):
+            raise Exception(f"2captcha error: {resultado.get('request')}")
+
+    raise Exception("2captcha tardó demasiado en resolver el captcha.")
+
+
 def consultar_laestrella(page, placa):
-    HEADERS = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
-        "Accept":     "application/json, text/plain, */*",
-        "Referer":    "https://sistematizacion.emtrasur.com.co/",
-        "Origin":     "https://sistematizacion.emtrasur.com.co",
-    }
+    token = resolver_recaptcha_2captcha(EMTRASUR_SITE_KEY, EMTRASUR_URL)
 
-    # Intento 1: API directa sin captcha
-    try:
-        url  = f"https://sistematizacion.emtrasur.com.co/api/Sistematizacion/{placa}"
-        resp = requests.get(url, headers=HEADERS, timeout=10)
-        if resp.status_code == 200:
-            data = resp.json()
-            if data.get("Success"):
-                return _parsear_emtrasur(data.get("Data", []))
-    except Exception:
-        pass
+    api_url = f"https://sistematizacion.emtrasur.com.co/api/Sistematizacion/{placa}"
+    resp = requests.get(api_url, headers={
+        "User-Agent":      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
+        "Accept":          "application/json, text/plain, */*",
+        "Referer":         EMTRASUR_URL,
+        "Origin":          "https://sistematizacion.emtrasur.com.co",
+        "X-Captcha-Token": token,
+    }, timeout=15)
 
-    # Intento 2: Playwright interceptando la respuesta de red
-    resultado_api = []
+    if resp.status_code == 200:
+        data = resp.json()
+        if data.get("Success"):
+            return _parsear_emtrasur(data.get("Data", []))
 
-    def capturar_respuesta(response):
-        nonlocal resultado_api
-        if f"/api/Sistematizacion/{placa}" in response.url and response.status == 200:
-            try:
-                data = response.json()
-                if data.get("Success"):
-                    resultado_api = data.get("Data", [])
-            except Exception:
-                pass
-
-    page.on("response", capturar_respuesta)
-    page.goto("https://sistematizacion.emtrasur.com.co/", wait_until="networkidle")
-    page.wait_for_timeout(2000)
-
-    campo = page.wait_for_selector('input[type="text"]', timeout=8000)
-    campo.fill(placa)
-
-    for sel in ['input[type="checkbox"]', '[class*="captcha" i]']:
-        els = page.query_selector_all(sel)
-        if els:
-            els[0].click()
-            page.wait_for_timeout(800)
-            break
-
-    for sel in ['button:has-text("Consultar")', 'button[type="submit"]']:
-        try:
-            btn = page.wait_for_selector(sel, timeout=3000)
-            if btn:
-                btn.click()
-                break
-        except Exception:
-            continue
-
-    for _ in range(20):
-        if resultado_api:
-            break
-        page.wait_for_timeout(500)
-
-    return _parsear_emtrasur(resultado_api)
+    raise Exception(f"EMTRASUR respondió {resp.status_code}: {resp.text[:200]}")
 
 
 MUNICIPIOS = {
@@ -334,26 +330,6 @@ MUNICIPIOS = {
     "laestrella": consultar_laestrella,
 }
 
-@app.route("/debug-emtrasur", methods=["GET"])
-def debug_emtrasur():
-    placa = request.args.get("placa", "QWR58F").upper().strip()
-    url   = f"https://sistematizacion.emtrasur.com.co/api/Sistematizacion/{placa}"
-    HEADERS = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
-        "Accept":     "application/json, text/plain, */*",
-        "Referer":    "https://sistematizacion.emtrasur.com.co/",
-        "Origin":     "https://sistematizacion.emtrasur.com.co",
-    }
-    try:
-        resp = requests.get(url, headers=HEADERS, timeout=10)
-        return jsonify({
-            "status_code": resp.status_code,
-            "url":         url,
-            "body":        resp.text[:1000]
-        })
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-        
 
 @app.route("/consultar", methods=["GET"])
 def consultar():
