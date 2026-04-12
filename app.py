@@ -330,7 +330,13 @@ MUNICIPIOS = {
     "laestrella": consultar_laestrella,
 }
 
-
+@app.route("/debug-2captcha", methods=["GET"])
+def debug_2captcha():
+    try:
+        token = resolver_recaptcha_2captcha(EMTRASUR_SITE_KEY, EMTRASUR_URL)
+        return jsonify({"token": token[:60] + "...", "ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 @app.route("/consultar", methods=["GET"])
 def consultar():
     placa     = request.args.get("placa", "").upper().strip()
