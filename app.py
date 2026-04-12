@@ -327,7 +327,8 @@ MUNICIPIOS = {
     "sabaneta":   consultar_sabaneta,
     "itagui":     consultar_itagui,
     "bello":      consultar_bello,
-    "laestrella": consultar_laestrella,
+    "laestrella":  consultar_laestrella,
+    "la estrella": consultar_laestrella,
 }
 
 
