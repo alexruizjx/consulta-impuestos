@@ -264,7 +264,8 @@ def _parsear_emtrasur(data: list):
     return registros, total
 
 
-TWOCAPTCHA_API_KEY = "47a18b883a00d513b2c78b0ac2cd0f00"
+import os
+TWOCAPTCHA_API_KEY = os.environ.get("TWOCAPTCHA_API_KEY")
 EMTRASUR_SITE_KEY  = "6LfGbysqAAAAADdADxFvOlCJXvuKvJzjuioYSoJP"
 EMTRASUR_URL       = "https://sistematizacion.emtrasur.com.co/"
 
