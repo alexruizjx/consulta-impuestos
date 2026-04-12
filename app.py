@@ -334,6 +334,26 @@ MUNICIPIOS = {
     "laestrella": consultar_laestrella,
 }
 
+@app.route("/debug-emtrasur", methods=["GET"])
+def debug_emtrasur():
+    placa = request.args.get("placa", "QWR58F").upper().strip()
+    url   = f"https://sistematizacion.emtrasur.com.co/api/Sistematizacion/{placa}"
+    HEADERS = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
+        "Accept":     "application/json, text/plain, */*",
+        "Referer":    "https://sistematizacion.emtrasur.com.co/",
+        "Origin":     "https://sistematizacion.emtrasur.com.co",
+    }
+    try:
+        resp = requests.get(url, headers=HEADERS, timeout=10)
+        return jsonify({
+            "status_code": resp.status_code,
+            "url":         url,
+            "body":        resp.text[:1000]
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+        
 
 @app.route("/consultar", methods=["GET"])
 def consultar():
