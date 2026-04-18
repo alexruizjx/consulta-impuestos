@@ -14,12 +14,76 @@ TIMEOUT = 10000
 MSG_NO_MATRICULADO = "El vehiculo no se encuentra matriculado en la Secretaria de Movilidad"
 AÑO_ACTUAL = str(datetime.now().year)
 
+# ── Captcha ──
+TWOCAPTCHA_API_KEY = "47a18b883a00d513b2c78b0ac2cd0f00"
+EMTRASUR_SITE_KEY  = "6Leshn4sAAAAAIas9tkeW3vKPg0a4uYqw-7fG7Pn"
+EMTRASUR_URL       = "https://sistematizacion.emtrasur.com.co/"
+ANTIOQUIA_SITE_KEY = "0x4AAAAAACJy_BR2tRNN1cnv"
+ANTIOQUIA_URL      = "https://www.vehiculosantioquia.com.co/impuestosweb/#/public"
+ANTIOQUIA_API      = "https://www.vehiculosantioquia.com.co/raiz-backimpuestosweb/backimpuestosweb"
+
 
 def bloquear_recursos(page):
     page.route("**/*", lambda route: route.abort()
                if route.request.resource_type in ["image", "stylesheet", "font", "media", "other"]
                else route.continue_())
 
+
+def resolver_recaptcha_2captcha(site_key, page_url):
+    resp = requests.post("https://2captcha.com/in.php", data={
+        "key":       TWOCAPTCHA_API_KEY,
+        "method":    "userrecaptcha",
+        "googlekey": site_key,
+        "pageurl":   page_url,
+        "json":      1,
+    }, timeout=15)
+    data = resp.json()
+    if data.get("status") != 1:
+        raise Exception(f"2captcha error al enviar: {data.get('request')}")
+    captcha_id = data["request"]
+    for _ in range(24):
+        time.sleep(5)
+        resultado = requests.get("https://2captcha.com/res.php", params={
+            "key":    TWOCAPTCHA_API_KEY,
+            "action": "get",
+            "id":     captcha_id,
+            "json":   1,
+        }, timeout=10).json()
+        if resultado.get("status") == 1:
+            return resultado["request"]
+        if resultado.get("request") not in ("CAPCHA_NOT_READY", "CAPTCHA_NOT_READY"):
+            raise Exception(f"2captcha error: {resultado.get('request')}")
+    raise Exception("2captcha tardó demasiado en resolver el captcha.")
+
+
+def resolver_turnstile_2captcha(site_key, page_url):
+    resp = requests.post("https://2captcha.com/in.php", data={
+        "key":     TWOCAPTCHA_API_KEY,
+        "method":  "turnstile",
+        "sitekey": site_key,
+        "pageurl": page_url,
+        "json":    1,
+    }, timeout=15)
+    data = resp.json()
+    if data.get("status") != 1:
+        raise Exception(f"2captcha error al enviar: {data.get('request')}")
+    captcha_id = data["request"]
+    for _ in range(24):
+        time.sleep(5)
+        resultado = requests.get("https://2captcha.com/res.php", params={
+            "key":    TWOCAPTCHA_API_KEY,
+            "action": "get",
+            "id":     captcha_id,
+            "json":   1,
+        }, timeout=10).json()
+        if resultado.get("status") == 1:
+            return resultado["request"]
+        if resultado.get("request") not in ("CAPCHA_NOT_READY", "CAPTCHA_NOT_READY"):
+            raise Exception(f"2captcha error: {resultado.get('request')}")
+    raise Exception("2captcha tardó demasiado en resolver el captcha.")
+
+
+# ── Municipios ──
 
 def consultar_envigado(page, placa):
     url = "https://movilidad.envigado.gov.co/portal-servicios/#/impuesto-local"
@@ -69,17 +133,14 @@ def consultar_sabaneta(page, placa):
     page.locator("#placa").wait_for(state="visible", timeout=15000)
     page.locator("#placa").fill(placa)
     page.get_by_role("button", name="Buscar").click()
-
     page.wait_for_timeout(20000)
 
     texto_pagina = page.inner_text("body")
 
     if MSG_NO_MATRICULADO in texto_pagina:
         return [], 0
-
     if 'Último pago realizado' in texto_pagina and 'Vigencias pendientes' not in texto_pagina:
         return [], 0
-
     if 'Vigencias pendientes' not in texto_pagina:
         return [], 0
 
@@ -143,7 +204,6 @@ def consultar_itagui(page, placa):
 
     if MSG_NO_MATRICULADO in texto_pagina:
         return [], 0
-
     if 'Vigencias pendientes' not in texto_pagina and AÑO_ACTUAL in texto_pagina:
         return [], 0
 
@@ -211,12 +271,10 @@ def consultar_bello(page, placa):
         return [], 0
 
     page.wait_for_timeout(10000)
-
     texto_pagina = page.inner_text("body")
 
     if 'paz y salvo' in texto_pagina or 'No se encontraron registros' in texto_pagina:
         return [], 0
-
     if 'Vigencias pendientes' not in texto_pagina:
         return [], 0
 
@@ -240,22 +298,17 @@ def consultar_bello(page, placa):
                 pass
 
     match_total = re.search(r'Total a pagar:\s*COP\s*([\d.]+)', texto_pagina)
-    if match_total:
-        total = int(match_total.group(1).replace('.', ''))
-    else:
-        total = sum(r['total_vigencia'] for r in registros)
-
+    total = int(match_total.group(1).replace('.', '')) if match_total else sum(r['total_vigencia'] for r in registros)
     return registros, total
 
 
-def _parsear_emtrasur(data: list):
+def _parsear_emtrasur(data):
     registros = []
     for r in data:
-        valor = r.get("ValorPorFacturar", 0)
         registros.append({
             "vigencia":       str(r.get("AnioNoFacturado", "")),
             "estado":         "Pendiente de pago",
-            "total_vigencia": valor,
+            "total_vigencia": r.get("ValorPorFacturar", 0),
             "tipo_vehiculo":  r.get("TipoVehiculo", ""),
             "ultimo_pago":    r.get("AnioPagado", ""),
             "descripcion":    r.get("DescripcionNoFacturada", "").strip(),
@@ -264,47 +317,8 @@ def _parsear_emtrasur(data: list):
     return registros, total
 
 
-TWOCAPTCHA_API_KEY = "47a18b883a00d513b2c78b0ac2cd0f00"
-EMTRASUR_SITE_KEY  = "6Leshn4sAAAAAIas9tkeW3vKPg0a4uYqw-7fG7Pn"
-EMTRASUR_URL       = "https://sistematizacion.emtrasur.com.co/"
-
-
-def resolver_recaptcha_2captcha(site_key: str, page_url: str) -> str:
-    resp = requests.post("https://2captcha.com/in.php", data={
-        "key":       TWOCAPTCHA_API_KEY,
-        "method":    "userrecaptcha",
-        "googlekey": site_key,
-        "pageurl":   page_url,
-        "json":      1,
-    }, timeout=15)
-
-    data = resp.json()
-    if data.get("status") != 1:
-        raise Exception(f"2captcha error al enviar: {data.get('request')}")
-
-    captcha_id = data["request"]
-
-    for _ in range(24):
-        time.sleep(5)
-        resultado = requests.get("https://2captcha.com/res.php", params={
-            "key":    TWOCAPTCHA_API_KEY,
-            "action": "get",
-            "id":     captcha_id,
-            "json":   1,
-        }, timeout=10).json()
-
-        if resultado.get("status") == 1:
-            return resultado["request"]
-
-        if resultado.get("request") not in ("CAPCHA_NOT_READY", "CAPTCHA_NOT_READY"):
-            raise Exception(f"2captcha error: {resultado.get('request')}")
-
-    raise Exception("2captcha tardó demasiado en resolver el captcha.")
-
-
 def consultar_laestrella(page, placa):
     token = resolver_recaptcha_2captcha(EMTRASUR_SITE_KEY, EMTRASUR_URL)
-
     api_url = f"https://sistematizacion.emtrasur.com.co/api/Sistematizacion/{placa}"
     resp = requests.get(api_url, headers={
         "User-Agent":      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
@@ -313,20 +327,205 @@ def consultar_laestrella(page, placa):
         "Origin":          "https://sistematizacion.emtrasur.com.co",
         "X-Captcha-Token": token,
     }, timeout=15)
-
     if resp.status_code == 200:
         data = resp.json()
         if data.get("Success"):
             return _parsear_emtrasur(data.get("Data", []))
-
     raise Exception(f"EMTRASUR respondió {resp.status_code}: {resp.text[:200]}")
 
 
+def consultar_antioquia(page, placa, identificacion, tipo_documento,
+                        modelo, municipio_transito, apellidos_propietario):
+    """
+    Consulta impuesto departamental de Antioquia.
+    Limitado a 1 vigencia en esta versión gratuita.
+    """
+
+    # Paso 1 — Resolver Turnstile
+    token = resolver_turnstile_2captcha(ANTIOQUIA_SITE_KEY, ANTIOQUIA_URL)
+
+    session = requests.Session()
+    session.headers.update({
+        "Accept":           "*/*",
+        "Content-Type":     "application/json",
+        "captcha":          token,
+        "Referer":          "https://www.vehiculosantioquia.com.co/impuestosweb/",
+        "X-Requested-With": "XMLHttpRequest",
+        "User-Agent":       "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Mobile Safari/537.36",
+    })
+
+    # Paso 2 — Obtener cuestionario
+    r1 = session.post(
+        f"{ANTIOQUIA_API}/ConsultarEstadoCuentaImpAntioquia/obtenerCuestionarioEstadoCuenta",
+        json={
+            "placa":                placa,
+            "idTipoIdentificacion": tipo_documento,
+            "identificacion":       identificacion,
+        },
+        timeout=30
+    )
+    data1 = r1.json()
+    referencia = data1.get("referencia")
+
+    # Buscar nombre del propietario
+    opciones_nombre = data1.get("preguntaNombrePropietario", {}).get("opcionesPregunta", [])
+    nombre_encontrado = next(
+        (n for n in opciones_nombre if apellidos_propietario.upper() in n.upper()), None
+    )
+    if not nombre_encontrado:
+        raise Exception(f"No se encontró propietario con apellidos '{apellidos_propietario}'.")
+
+    # Paso 3 — Validar cuestionario
+    r2 = session.post(
+        f"{ANTIOQUIA_API}/ConsultarEstadoCuentaImpAntioquia/validarCuestionarioEstadoCuenta",
+        json={
+            "placa":           placa,
+            "tipoDocumento":   tipo_documento,
+            "numeroDocumento": identificacion,
+            "idEstadoCuenta":  referencia,
+            "respuestas": {
+                "respuestaModelo":            modelo,
+                "respuestaOrganismoTransito": municipio_transito,
+                "respuestaNombrePropietario": nombre_encontrado,
+            }
+        },
+        timeout=30
+    )
+    if r2.json().get("codigo") != 1:
+        raise Exception("Cuestionario incorrecto. Verifica modelo, municipio y apellidos.")
+
+    # Paso 4 — Resolver segundo Turnstile y obtener estado de cuenta
+    token2 = resolver_turnstile_2captcha(ANTIOQUIA_SITE_KEY, ANTIOQUIA_URL)
+    session.headers.update({"captcha": token2})
+
+    token_cuestionario = session.cookies.get("token_cuestionario")
+    if not token_cuestionario:
+        raise Exception("No se obtuvo token_cuestionario.")
+
+    r3 = session.post(
+        f"{ANTIOQUIA_API}/ConsultarEstadoCuentaImpAntioquia/consultarEstadoCuentaVehiculoHomePublico",
+        json={"placa": placa, "informacionDeclarante": {
+            "idsolicitante": identificacion,
+            "idTipoIdentificacion": tipo_documento
+        }},
+        headers={"Cookie": f"token_cuestionario={token_cuestionario}"},
+        timeout=30
+    )
+    data3 = r3.json()
+
+    estado              = data3.get("estadoCuenta", {})
+    vigencias_adeudadas = data3.get("listaVigenciasAdeudas", [])
+    procesos_fiscales   = data3.get("listaProcesoFiscal", [])
+    avaluo              = estado.get("avaluoComercial", 0) or 0
+
+    # Sin deuda
+    if not vigencias_adeudadas:
+        return [], 0, avaluo, estado
+
+    total_vigencias = len(vigencias_adeudadas)
+    LIMITE = 1
+
+    # ── Límite gratuito: solo 1 vigencia ──
+    if total_vigencias > LIMITE:
+        registros = []
+        for v in sorted(vigencias_adeudadas, key=lambda x: x["vigencia"]):
+            vigencia = v.get("vigencia")
+            procesos = [p for p in procesos_fiscales if p.get("vigencia") == vigencia]
+            estado_vigencia = procesos[0].get("descripcionProcesoFiscal") if procesos else "Pendiente de pago"
+            registros.append({
+                "vigencia":       str(vigencia),
+                "estado":         estado_vigencia,
+                "total_vigencia": None,  # no se liquida en versión gratuita
+            })
+        return registros, None, avaluo, estado, True  # True = excede límite
+
+    # ── Consultar la vigencia ──
+    vigencia_a_consultar = sorted(vigencias_adeudadas, key=lambda x: x["vigencia"], reverse=True)[0]
+    anio = vigencia_a_consultar.get("vigencia")
+
+    # Resolver Turnstile para propietario
+    token3 = resolver_turnstile_2captcha(ANTIOQUIA_SITE_KEY, ANTIOQUIA_URL)
+    session.headers.update({"captcha": token3})
+
+    r4 = session.post(
+        f"{ANTIOQUIA_API}/UsuariosPortalAntioquia/consultarPropietarioVehiculo",
+        json={"tipoDoc": "CC", "nroDoc": identificacion, "placa": placa, "vigencia": anio},
+        headers={"Cookie": f"token_cuestionario={token_cuestionario}"},
+        timeout=30
+    )
+    propietario = r4.json().get("propietario", {})
+
+    # Llamadas previas requeridas por el portal
+    session.post(f"{ANTIOQUIA_API}/TablasTipo/obtenerTablasPropietario", json={},
+                 headers={"Cookie": f"token_cuestionario={token_cuestionario}"}, timeout=30)
+    session.get(f"{ANTIOQUIA_API}/UtilImpuestos/obtenerDescripcionPPST",
+                headers={"Cookie": f"token_cuestionario={token_cuestionario}"}, timeout=30)
+    session.post(f"{ANTIOQUIA_API}/Pagos/parametrosPago", json={},
+                 headers={"Cookie": f"token_cuestionario={token_cuestionario}"}, timeout=30)
+    session.get(f"{ANTIOQUIA_API}/UtilImpuestos/obtenerVigenciaMinimaAutodeclarar",
+                headers={"Cookie": f"token_cuestionario={token_cuestionario}"}, timeout=30)
+
+    # Resolver Turnstile para declaración
+    token4 = resolver_turnstile_2captcha(ANTIOQUIA_SITE_KEY, ANTIOQUIA_URL)
+    session.headers.update({"captcha": token4})
+    session.cookies.clear()
+
+    r5 = session.post(
+        f"{ANTIOQUIA_API}/LiquidacionAntioquia/crearDeclaracionImpuestoAnt",
+        json={
+            "formularioLiquidacion": "",
+            "declarante": {
+                "idsolicitante":     identificacion,
+                "idtipodocumento":   "CC",
+                "desctipodocument":  "Cédula de Ciudadanía",
+                "nombres":           propietario.get("nameFirst", ""),
+                "apellidos":         propietario.get("nameLast", ""),
+                "celular":           "3000000000",
+                "telefono":          "3000000000",
+                "email":             "consulta@consulta.com",
+                "direccion":         "CRA",
+                "municipio":         "MEDELLIN",
+                "departamento":      "ANTIOQUIA",
+                "nivreclamacion":    0,
+                "procedimiento":     ""
+            },
+            "iIdliqIm": 0,
+            "informacionComplementaria": {
+                "idTipoDocumento":              1,
+                "distribucionDepartamento":     5,
+                "distribucionMunicipio":        5001000,
+                "direccionCompleta":            "CRA",
+                "nombreDistribucionDepartamento": "ANTIOQUIA",
+                "nombreDistribucionMunicipio":  "MEDELLIN",
+                "tipoCanalLiquidacion":         2,
+                "tipoOpcionLiquidacion":        1
+            },
+            "placa":    placa,
+            "vigencia": [{"persl": anio}]
+        },
+        timeout=30
+    )
+    data5 = r5.json()
+    total_pagar = data5.get("totalPagar", 0)
+    avaluo_vigencia = data5.get("avaluoComercial", avaluo)
+    retefuente = avaluo_vigencia / 100
+
+    registros = [{
+        "vigencia":       str(anio),
+        "estado":         "Pendiente de pago",
+        "total_vigencia": total_pagar,
+    }]
+
+    return registros, total_pagar, avaluo_vigencia, estado, False
+
+
+# ── Router ──
+
 MUNICIPIOS = {
-    "envigado":   consultar_envigado,
-    "sabaneta":   consultar_sabaneta,
-    "itagui":     consultar_itagui,
-    "bello":      consultar_bello,
+    "envigado":    consultar_envigado,
+    "sabaneta":    consultar_sabaneta,
+    "itagui":      consultar_itagui,
+    "bello":       consultar_bello,
     "laestrella":  consultar_laestrella,
     "la estrella": consultar_laestrella,
 }
@@ -340,13 +539,13 @@ def consultar():
     if not placa or not municipio:
         return jsonify({"error": "Debes proporcionar placa y municipio."}), 400
 
-    if municipio not in MUNICIPIOS:
+    if municipio not in MUNICIPIOS and municipio != "antioquia":
         return jsonify({
             "error": f"Municipio '{municipio}' no reconocido.",
-            "opciones": list(MUNICIPIOS.keys())
+            "opciones": list(MUNICIPIOS.keys()) + ["antioquia"]
         }), 400
 
-    resultado = {}
+    resultado      = {}
     error_container = {}
 
     def ejecutar():
@@ -368,17 +567,41 @@ def consultar():
                 )
                 page = context.new_page()
 
-                if municipio not in ["bello", "sabaneta", "laestrella"]:
-                    bloquear_recursos(page)
+                if municipio == "antioquia":
+                    identificacion     = request.args.get("identificacion", "").strip()
+                    tipo_documento     = request.args.get("tipo_documento", "1").strip()
+                    modelo             = request.args.get("modelo", "").strip()
+                    municipio_transito = request.args.get("municipio_transito", "").upper().strip()
+                    apellidos          = request.args.get("apellidos_propietario", "").upper().strip()
 
-                funcion = MUNICIPIOS[municipio]
-                registros, total = funcion(page, placa)
+                    retorno = consultar_antioquia(
+                        page, placa, identificacion, tipo_documento,
+                        modelo, municipio_transito, apellidos
+                    )
+                    registros, total, avaluo, estado_veh, *resto = retorno
+                    excede = resto[0] if resto else False
+
+                    resultado['registros'] = registros
+                    resultado['total']     = total
+                    resultado['avaluo']    = avaluo
+                    resultado['excede']    = excede
+                    resultado['placa_info'] = {
+                        "marca":       estado_veh.get("marca", ""),
+                        "linea":       estado_veh.get("linea", ""),
+                        "modelo":      estado_veh.get("modelo", ""),
+                        "propietario": estado_veh.get("nombrePropietario", ""),
+                    }
+
+                else:
+                    if municipio not in ["bello", "sabaneta", "laestrella"]:
+                        bloquear_recursos(page)
+                    funcion = MUNICIPIOS[municipio]
+                    registros, total = funcion(page, placa)
+                    resultado['registros'] = registros
+                    resultado['total']     = total
 
                 context.close()
                 browser.close()
-
-                resultado['registros'] = registros
-                resultado['total']     = total
 
         except Exception as e:
             error_container['error'] = str(e)
@@ -405,13 +628,36 @@ def consultar():
             }), 503
         return jsonify({"error": error_container['error']}), 500
 
-    return jsonify({
-        "placa":     placa,
-        "municipio": municipio,
-        "registros": resultado.get('registros', []),
-        "total":     resultado.get('total', 0),
-        "sin_deuda": resultado.get('total', 0) == 0
-    })
+    # ── Respuesta municipios normales ──
+    if municipio != "antioquia":
+        return jsonify({
+            "placa":     placa,
+            "municipio": municipio,
+            "registros": resultado.get('registros', []),
+            "total":     resultado.get('total', 0),
+            "sin_deuda": resultado.get('total', 0) == 0
+        })
+
+    # ── Respuesta Antioquia ──
+    excede    = resultado.get('excede', False)
+    registros = resultado.get('registros', [])
+    total     = resultado.get('total', 0)
+
+    respuesta = {
+        "placa":      placa,
+        "municipio":  "antioquia",
+        "placa_info": resultado.get('placa_info', {}),
+        "registros":  registros,
+        "total":      total,
+        "avaluo":     resultado.get('avaluo', 0),
+        "sin_deuda":  total == 0 if total is not None else False,
+    }
+
+    if excede:
+        respuesta["excede_limite"]  = True
+        respuesta["mensaje_limite"] = "El límite de consulta es de 1 vigencia. Para consultar todas comunícate al 6044444666."
+
+    return jsonify(respuesta)
 
 
 if __name__ == "__main__":
