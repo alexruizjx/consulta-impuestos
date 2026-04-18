@@ -336,11 +336,6 @@ def consultar_laestrella(page, placa):
 
 def consultar_antioquia(page, placa, identificacion, tipo_documento,
                         modelo, municipio_transito, apellidos_propietario):
-    """
-    Consulta impuesto departamental de Antioquia.
-    Limitado a 1 vigencia en esta versión gratuita.
-    """
-
     # Paso 1 — Resolver Turnstile
     token = resolver_turnstile_2captcha(ANTIOQUIA_SITE_KEY, ANTIOQUIA_URL)
 
@@ -367,7 +362,6 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
     data1 = r1.json()
     referencia = data1.get("referencia")
 
-    # Buscar nombre del propietario
     opciones_nombre = data1.get("preguntaNombrePropietario", {}).get("opcionesPregunta", [])
     nombre_encontrado = next(
         (n for n in opciones_nombre if apellidos_propietario.upper() in n.upper()), None
@@ -394,7 +388,7 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
     if r2.json().get("codigo") != 1:
         raise Exception("Cuestionario incorrecto. Verifica modelo, municipio y apellidos.")
 
-    # Paso 4 — Resolver segundo Turnstile y obtener estado de cuenta
+    # Paso 4 — Segundo Turnstile y estado de cuenta
     token2 = resolver_turnstile_2captcha(ANTIOQUIA_SITE_KEY, ANTIOQUIA_URL)
     session.headers.update({"captcha": token2})
 
@@ -405,7 +399,7 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
     r3 = session.post(
         f"{ANTIOQUIA_API}/ConsultarEstadoCuentaImpAntioquia/consultarEstadoCuentaVehiculoHomePublico",
         json={"placa": placa, "informacionDeclarante": {
-            "idsolicitante": identificacion,
+            "idsolicitante":       identificacion,
             "idTipoIdentificacion": tipo_documento
         }},
         headers={"Cookie": f"token_cuestionario={token_cuestionario}"},
@@ -418,14 +412,12 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
     procesos_fiscales   = data3.get("listaProcesoFiscal", [])
     avaluo              = estado.get("avaluoComercial", 0) or 0
 
-    # Sin deuda
     if not vigencias_adeudadas:
-        return [], 0, avaluo, estado
+        return [], 0, avaluo, estado, False
 
     total_vigencias = len(vigencias_adeudadas)
     LIMITE = 1
 
-    # ── Límite gratuito: solo 1 vigencia ──
     if total_vigencias > LIMITE:
         registros = []
         for v in sorted(vigencias_adeudadas, key=lambda x: x["vigencia"]):
@@ -435,15 +427,13 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
             registros.append({
                 "vigencia":       str(vigencia),
                 "estado":         estado_vigencia,
-                "total_vigencia": None,  # no se liquida en versión gratuita
+                "total_vigencia": None,
             })
-        return registros, None, avaluo, estado, True  # True = excede límite
+        return registros, None, avaluo, estado, True
 
-    # ── Consultar la vigencia ──
-    vigencia_a_consultar = sorted(vigencias_adeudadas, key=lambda x: x["vigencia"], reverse=True)[0]
-    anio = vigencia_a_consultar.get("vigencia")
+    # Consultar única vigencia
+    anio = sorted(vigencias_adeudadas, key=lambda x: x["vigencia"], reverse=True)[0].get("vigencia")
 
-    # Resolver Turnstile para propietario
     token3 = resolver_turnstile_2captcha(ANTIOQUIA_SITE_KEY, ANTIOQUIA_URL)
     session.headers.update({"captcha": token3})
 
@@ -455,7 +445,6 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
     )
     propietario = r4.json().get("propietario", {})
 
-    # Llamadas previas requeridas por el portal
     session.post(f"{ANTIOQUIA_API}/TablasTipo/obtenerTablasPropietario", json={},
                  headers={"Cookie": f"token_cuestionario={token_cuestionario}"}, timeout=30)
     session.get(f"{ANTIOQUIA_API}/UtilImpuestos/obtenerDescripcionPPST",
@@ -465,7 +454,6 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
     session.get(f"{ANTIOQUIA_API}/UtilImpuestos/obtenerVigenciaMinimaAutodeclarar",
                 headers={"Cookie": f"token_cuestionario={token_cuestionario}"}, timeout=30)
 
-    # Resolver Turnstile para declaración
     token4 = resolver_turnstile_2captcha(ANTIOQUIA_SITE_KEY, ANTIOQUIA_URL)
     session.headers.update({"captcha": token4})
     session.cookies.clear()
@@ -475,30 +463,30 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
         json={
             "formularioLiquidacion": "",
             "declarante": {
-                "idsolicitante":     identificacion,
-                "idtipodocumento":   "CC",
-                "desctipodocument":  "Cédula de Ciudadanía",
-                "nombres":           propietario.get("nameFirst", ""),
-                "apellidos":         propietario.get("nameLast", ""),
-                "celular":           "3000000000",
-                "telefono":          "3000000000",
-                "email":             "consulta@consulta.com",
-                "direccion":         "CRA",
-                "municipio":         "MEDELLIN",
-                "departamento":      "ANTIOQUIA",
-                "nivreclamacion":    0,
-                "procedimiento":     ""
+                "idsolicitante":    identificacion,
+                "idtipodocumento":  "CC",
+                "desctipodocument": "Cédula de Ciudadanía",
+                "nombres":          propietario.get("nameFirst", ""),
+                "apellidos":        propietario.get("nameLast", ""),
+                "celular":          "3000000000",
+                "telefono":         "3000000000",
+                "email":            "consulta@consulta.com",
+                "direccion":        "CRA",
+                "municipio":        "MEDELLIN",
+                "departamento":     "ANTIOQUIA",
+                "nivreclamacion":   0,
+                "procedimiento":    ""
             },
             "iIdliqIm": 0,
             "informacionComplementaria": {
-                "idTipoDocumento":              1,
-                "distribucionDepartamento":     5,
-                "distribucionMunicipio":        5001000,
-                "direccionCompleta":            "CRA",
+                "idTipoDocumento":               1,
+                "distribucionDepartamento":      5,
+                "distribucionMunicipio":         5001000,
+                "direccionCompleta":             "CRA",
                 "nombreDistribucionDepartamento": "ANTIOQUIA",
-                "nombreDistribucionMunicipio":  "MEDELLIN",
-                "tipoCanalLiquidacion":         2,
-                "tipoOpcionLiquidacion":        1
+                "nombreDistribucionMunicipio":   "MEDELLIN",
+                "tipoCanalLiquidacion":          2,
+                "tipoOpcionLiquidacion":         1
             },
             "placa":    placa,
             "vigencia": [{"persl": anio}]
@@ -506,9 +494,8 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
         timeout=30
     )
     data5 = r5.json()
-    total_pagar = data5.get("totalPagar", 0)
+    total_pagar     = data5.get("totalPagar", 0)
     avaluo_vigencia = data5.get("avaluoComercial", avaluo)
-    retefuente = avaluo_vigencia / 100
 
     registros = [{
         "vigencia":       str(anio),
@@ -545,7 +532,20 @@ def consultar():
             "opciones": list(MUNICIPIOS.keys()) + ["antioquia"]
         }), 400
 
-    resultado      = {}
+    # ── Extraer parámetros ANTES del hilo ──
+    identificacion     = request.args.get("identificacion", "").strip()
+    tipo_documento     = request.args.get("tipo_documento", "1").strip()
+    modelo             = request.args.get("modelo", "").strip()
+    municipio_transito = request.args.get("municipio_transito", "").upper().strip()
+    apellidos          = request.args.get("apellidos_propietario", "").upper().strip()
+
+    if municipio == "antioquia":
+        if not identificacion or not modelo or not municipio_transito or not apellidos:
+            return jsonify({
+                "error": "Para Antioquia debes proporcionar: identificacion, modelo, municipio_transito, apellidos_propietario."
+            }), 400
+
+    resultado       = {}
     error_container = {}
 
     def ejecutar():
@@ -568,30 +568,22 @@ def consultar():
                 page = context.new_page()
 
                 if municipio == "antioquia":
-                    identificacion     = request.args.get("identificacion", "").strip()
-                    tipo_documento     = request.args.get("tipo_documento", "1").strip()
-                    modelo             = request.args.get("modelo", "").strip()
-                    municipio_transito = request.args.get("municipio_transito", "").upper().strip()
-                    apellidos          = request.args.get("apellidos_propietario", "").upper().strip()
-
                     retorno = consultar_antioquia(
                         page, placa, identificacion, tipo_documento,
                         modelo, municipio_transito, apellidos
                     )
-                    registros, total, avaluo, estado_veh, *resto = retorno
-                    excede = resto[0] if resto else False
+                    registros, total, avaluo, estado_veh, excede = retorno
 
-                    resultado['registros'] = registros
-                    resultado['total']     = total
-                    resultado['avaluo']    = avaluo
-                    resultado['excede']    = excede
+                    resultado['registros']  = registros
+                    resultado['total']      = total
+                    resultado['avaluo']     = avaluo
+                    resultado['excede']     = excede
                     resultado['placa_info'] = {
                         "marca":       estado_veh.get("marca", ""),
                         "linea":       estado_veh.get("linea", ""),
                         "modelo":      estado_veh.get("modelo", ""),
                         "propietario": estado_veh.get("nombrePropietario", ""),
                     }
-
                 else:
                     if municipio not in ["bello", "sabaneta", "laestrella"]:
                         bloquear_recursos(page)
@@ -628,7 +620,7 @@ def consultar():
             }), 503
         return jsonify({"error": error_container['error']}), 500
 
-    # ── Respuesta municipios normales ──
+    # ── Respuesta municipios ──
     if municipio != "antioquia":
         return jsonify({
             "placa":     placa,
