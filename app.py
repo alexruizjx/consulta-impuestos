@@ -336,6 +336,7 @@ def consultar_laestrella(page, placa):
 
 def consultar_antioquia(page, placa, identificacion, tipo_documento,
                         modelo, municipio_transito, apellidos_propietario):
+
     # Paso 1 — Resolver Turnstile
     token = resolver_turnstile_2captcha(ANTIOQUIA_SITE_KEY, ANTIOQUIA_URL)
 
@@ -399,7 +400,7 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
     r3 = session.post(
         f"{ANTIOQUIA_API}/ConsultarEstadoCuentaImpAntioquia/consultarEstadoCuentaVehiculoHomePublico",
         json={"placa": placa, "informacionDeclarante": {
-            "idsolicitante":       identificacion,
+            "idsolicitante":        identificacion,
             "idTipoIdentificacion": tipo_documento
         }},
         headers={"Cookie": f"token_cuestionario={token_cuestionario}"},
@@ -418,92 +419,97 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
     total_vigencias = len(vigencias_adeudadas)
     LIMITE = 1
 
-    if total_vigencias > LIMITE:
-        registros = []
-        for v in sorted(vigencias_adeudadas, key=lambda x: x["vigencia"]):
-            vigencia = v.get("vigencia")
-            procesos = [p for p in procesos_fiscales if p.get("vigencia") == vigencia]
-            estado_vigencia = procesos[0].get("descripcionProcesoFiscal") if procesos else "Pendiente de pago"
+    def liquidar_vigencia(anio):
+        """Liquida una vigencia y retorna (total, avaluo)."""
+        token3 = resolver_turnstile_2captcha(ANTIOQUIA_SITE_KEY, ANTIOQUIA_URL)
+        session.headers.update({"captcha": token3})
+
+        r4 = session.post(
+            f"{ANTIOQUIA_API}/UsuariosPortalAntioquia/consultarPropietarioVehiculo",
+            json={"tipoDoc": "CC", "nroDoc": identificacion, "placa": placa, "vigencia": anio},
+            headers={"Cookie": f"token_cuestionario={token_cuestionario}"},
+            timeout=30
+        )
+        propietario = r4.json().get("propietario", {})
+
+        session.post(f"{ANTIOQUIA_API}/TablasTipo/obtenerTablasPropietario", json={},
+                     headers={"Cookie": f"token_cuestionario={token_cuestionario}"}, timeout=30)
+        session.get(f"{ANTIOQUIA_API}/UtilImpuestos/obtenerDescripcionPPST",
+                    headers={"Cookie": f"token_cuestionario={token_cuestionario}"}, timeout=30)
+        session.post(f"{ANTIOQUIA_API}/Pagos/parametrosPago", json={},
+                     headers={"Cookie": f"token_cuestionario={token_cuestionario}"}, timeout=30)
+        session.get(f"{ANTIOQUIA_API}/UtilImpuestos/obtenerVigenciaMinimaAutodeclarar",
+                    headers={"Cookie": f"token_cuestionario={token_cuestionario}"}, timeout=30)
+
+        token4 = resolver_turnstile_2captcha(ANTIOQUIA_SITE_KEY, ANTIOQUIA_URL)
+        session.headers.update({"captcha": token4})
+        session.cookies.clear()
+
+        r5 = session.post(
+            f"{ANTIOQUIA_API}/LiquidacionAntioquia/crearDeclaracionImpuestoAnt",
+            json={
+                "formularioLiquidacion": "",
+                "declarante": {
+                    "idsolicitante":    identificacion,
+                    "idtipodocumento":  "CC",
+                    "desctipodocument": "Cédula de Ciudadanía",
+                    "nombres":          propietario.get("nameFirst", ""),
+                    "apellidos":        propietario.get("nameLast", ""),
+                    "celular":          "3000000000",
+                    "telefono":         "3000000000",
+                    "email":            "consulta@consulta.com",
+                    "direccion":        "CRA",
+                    "municipio":        "MEDELLIN",
+                    "departamento":     "ANTIOQUIA",
+                    "nivreclamacion":   0,
+                    "procedimiento":    ""
+                },
+                "iIdliqIm": 0,
+                "informacionComplementaria": {
+                    "idTipoDocumento":               1,
+                    "distribucionDepartamento":      5,
+                    "distribucionMunicipio":         5001000,
+                    "direccionCompleta":             "CRA",
+                    "nombreDistribucionDepartamento": "ANTIOQUIA",
+                    "nombreDistribucionMunicipio":   "MEDELLIN",
+                    "tipoCanalLiquidacion":          2,
+                    "tipoOpcionLiquidacion":         1
+                },
+                "placa":    placa,
+                "vigencia": [{"persl": anio}]
+            },
+            timeout=30
+        )
+        data5 = r5.json()
+        return data5.get("totalPagar", 0), data5.get("avaluoComercial", avaluo)
+
+    # Vigencia más reciente
+    anio_reciente = sorted(vigencias_adeudadas, key=lambda x: x["vigencia"], reverse=True)[0].get("vigencia")
+
+    # Liquidar siempre la vigencia más reciente
+    total_reciente, avaluo_reciente = liquidar_vigencia(anio_reciente)
+
+    # Construir registros
+    registros = []
+    for v in sorted(vigencias_adeudadas, key=lambda x: x["vigencia"], reverse=True):
+        vigencia = v.get("vigencia")
+        procesos = [p for p in procesos_fiscales if p.get("vigencia") == vigencia]
+        estado_vigencia = procesos[0].get("descripcionProcesoFiscal") if procesos else "Pendiente de pago"
+        if vigencia == anio_reciente:
+            registros.append({
+                "vigencia":       str(vigencia),
+                "estado":         estado_vigencia,
+                "total_vigencia": total_reciente,
+            })
+        else:
             registros.append({
                 "vigencia":       str(vigencia),
                 "estado":         estado_vigencia,
                 "total_vigencia": None,
             })
-        return registros, None, avaluo, estado, True
 
-    # Consultar única vigencia
-    anio = sorted(vigencias_adeudadas, key=lambda x: x["vigencia"], reverse=True)[0].get("vigencia")
-
-    token3 = resolver_turnstile_2captcha(ANTIOQUIA_SITE_KEY, ANTIOQUIA_URL)
-    session.headers.update({"captcha": token3})
-
-    r4 = session.post(
-        f"{ANTIOQUIA_API}/UsuariosPortalAntioquia/consultarPropietarioVehiculo",
-        json={"tipoDoc": "CC", "nroDoc": identificacion, "placa": placa, "vigencia": anio},
-        headers={"Cookie": f"token_cuestionario={token_cuestionario}"},
-        timeout=30
-    )
-    propietario = r4.json().get("propietario", {})
-
-    session.post(f"{ANTIOQUIA_API}/TablasTipo/obtenerTablasPropietario", json={},
-                 headers={"Cookie": f"token_cuestionario={token_cuestionario}"}, timeout=30)
-    session.get(f"{ANTIOQUIA_API}/UtilImpuestos/obtenerDescripcionPPST",
-                headers={"Cookie": f"token_cuestionario={token_cuestionario}"}, timeout=30)
-    session.post(f"{ANTIOQUIA_API}/Pagos/parametrosPago", json={},
-                 headers={"Cookie": f"token_cuestionario={token_cuestionario}"}, timeout=30)
-    session.get(f"{ANTIOQUIA_API}/UtilImpuestos/obtenerVigenciaMinimaAutodeclarar",
-                headers={"Cookie": f"token_cuestionario={token_cuestionario}"}, timeout=30)
-
-    token4 = resolver_turnstile_2captcha(ANTIOQUIA_SITE_KEY, ANTIOQUIA_URL)
-    session.headers.update({"captcha": token4})
-    session.cookies.clear()
-
-    r5 = session.post(
-        f"{ANTIOQUIA_API}/LiquidacionAntioquia/crearDeclaracionImpuestoAnt",
-        json={
-            "formularioLiquidacion": "",
-            "declarante": {
-                "idsolicitante":    identificacion,
-                "idtipodocumento":  "CC",
-                "desctipodocument": "Cédula de Ciudadanía",
-                "nombres":          propietario.get("nameFirst", ""),
-                "apellidos":        propietario.get("nameLast", ""),
-                "celular":          "3000000000",
-                "telefono":         "3000000000",
-                "email":            "consulta@consulta.com",
-                "direccion":        "CRA",
-                "municipio":        "MEDELLIN",
-                "departamento":     "ANTIOQUIA",
-                "nivreclamacion":   0,
-                "procedimiento":    ""
-            },
-            "iIdliqIm": 0,
-            "informacionComplementaria": {
-                "idTipoDocumento":               1,
-                "distribucionDepartamento":      5,
-                "distribucionMunicipio":         5001000,
-                "direccionCompleta":             "CRA",
-                "nombreDistribucionDepartamento": "ANTIOQUIA",
-                "nombreDistribucionMunicipio":   "MEDELLIN",
-                "tipoCanalLiquidacion":          2,
-                "tipoOpcionLiquidacion":         1
-            },
-            "placa":    placa,
-            "vigencia": [{"persl": anio}]
-        },
-        timeout=30
-    )
-    data5 = r5.json()
-    total_pagar     = data5.get("totalPagar", 0)
-    avaluo_vigencia = data5.get("avaluoComercial", avaluo)
-
-    registros = [{
-        "vigencia":       str(anio),
-        "estado":         "Pendiente de pago",
-        "total_vigencia": total_pagar,
-    }]
-
-    return registros, total_pagar, avaluo_vigencia, estado, False
+    excede = total_vigencias > LIMITE
+    return registros, total_reciente, avaluo_reciente, estado, excede
 
 
 # ── Router ──
@@ -573,7 +579,6 @@ def consultar():
                         modelo, municipio_transito, apellidos
                     )
                     registros, total, avaluo, estado_veh, excede = retorno
-
                     resultado['registros']  = registros
                     resultado['total']      = total
                     resultado['avaluo']     = avaluo
@@ -647,7 +652,7 @@ def consultar():
 
     if excede:
         respuesta["excede_limite"]  = True
-        respuesta["mensaje_limite"] = "El límite de consulta es de 1 vigencia. Para consultar todas comunícate al 6044444666."
+        respuesta["mensaje_limite"] = "El límite de consulta es de una (1) vigencia. Para saber lo adeudado en las demás vigencias comunícate con un asesor de la Gobernación de Antioquia al 6044444666."
 
     return jsonify(respuesta)
 
