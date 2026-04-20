@@ -749,6 +749,11 @@ def tramites_precio():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route("/debug-env", methods=["GET"])
+def debug_env():
+    return jsonify({
+        "DATABASE_URL": os.environ.get("DATABASE_URL", "NO EXISTE")
+    })
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
