@@ -1,3 +1,4 @@
+import psycopg2
 import re
 import time
 import requests
@@ -655,6 +656,97 @@ def consultar():
         respuesta["mensaje_limite"] = "El límite de consulta es de una (1) vigencia. Para saber lo adeudado en las demás vigencias comunícate con un asesor de la Gobernación de Antioquia al 6044444666."
 
     return jsonify(respuesta)
+
+
+
+
+def get_db_conn():
+    return psycopg2.connect(os.environ["DATABASE_URL"])
+
+
+@app.route("/tramites/filtros", methods=["GET"])
+def tramites_filtros():
+    """Devuelve los valores únicos para poblar los dropdowns."""
+    try:
+        conn = get_db_conn()
+        cur = conn.cursor()
+
+        campo = request.args.get("campo", "")
+        departamento = request.args.get("departamento", "").strip().upper()
+        municipio = request.args.get("municipio", "").strip().upper()
+        clase = request.args.get("clase", "").strip().upper()
+
+        if campo == "departamento":
+            cur.execute("SELECT DISTINCT departamento FROM tramites_transito ORDER BY departamento")
+
+        elif campo == "municipio" and departamento:
+            cur.execute(
+                "SELECT DISTINCT municipio FROM tramites_transito WHERE departamento=%s ORDER BY municipio",
+                (departamento,)
+            )
+
+        elif campo == "clase" and municipio:
+            cur.execute(
+                "SELECT DISTINCT clase FROM tramites_transito WHERE municipio=%s ORDER BY clase",
+                (municipio,)
+            )
+
+        elif campo == "tramite" and municipio and clase:
+            cur.execute(
+                "SELECT DISTINCT tramite FROM tramites_transito WHERE municipio=%s AND clase=%s ORDER BY tramite",
+                (municipio, clase)
+            )
+
+        else:
+            cur.close()
+            conn.close()
+            return jsonify({"error": "Parámetros insuficientes"}), 400
+
+        valores = [row[0] for row in cur.fetchall()]
+        cur.close()
+        conn.close()
+        return jsonify({"valores": valores})
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/tramites/precio", methods=["GET"])
+def tramites_precio():
+    """Devuelve el precio para una combinación exacta."""
+    departamento = request.args.get("departamento", "").strip().upper()
+    municipio    = request.args.get("municipio", "").strip().upper()
+    clase        = request.args.get("clase", "").strip().upper()
+    tramite      = request.args.get("tramite", "").strip().upper()
+
+    if not all([departamento, municipio, clase, tramite]):
+        return jsonify({"error": "Debes enviar departamento, municipio, clase y tramite"}), 400
+
+    try:
+        conn = get_db_conn()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT precio FROM tramites_transito
+            WHERE departamento=%s AND municipio=%s AND clase=%s AND tramite=%s
+            LIMIT 1
+        """, (departamento, municipio, clase, tramite))
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+
+        if row:
+            return jsonify({
+                "departamento": departamento,
+                "municipio":    municipio,
+                "clase":        clase,
+                "tramite":      tramite,
+                "precio":       row[0]
+            })
+        else:
+            return jsonify({"error": "No se encontró el trámite"}), 404
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 if __name__ == "__main__":
