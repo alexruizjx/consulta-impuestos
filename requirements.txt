@@ -3,4 +3,4 @@ playwright
 gunicorn
 flask-cors
 requests
-import psycopg2
+psycopg2
