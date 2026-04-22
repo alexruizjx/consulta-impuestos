@@ -1,3 +1,6 @@
+import base64, re, io
+from PIL import Image
+import pytesseract
 import os
 import psycopg2
 import re
@@ -757,3 +760,77 @@ def debug_env():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
+
+# ── AGREGAR AL INICIO DE app.py ──────────────────────────────────────────────
+# import base64, re
+# from PIL import Image
+# import pytesseract
+# import io
+
+# ── AGREGAR AL FINAL DE app.py ────────────────────────────────────────────────
+
+@app.route("/ocr-tarjeta", methods=["POST"])
+def ocr_tarjeta():
+    """Recibe imagen base64 de tarjeta de propiedad y extrae los datos."""
+    try:
+        data = request.get_json()
+        if not data or "imagen" not in data:
+            return jsonify({"error": "No se recibió imagen"}), 400
+
+        # Decodificar base64
+        img_data = data["imagen"]
+        if "," in img_data:
+            img_data = img_data.split(",")[1]
+
+        img_bytes = base64.b64decode(img_data)
+        img = Image.open(io.BytesIO(img_bytes))
+
+        # Mejorar imagen para OCR
+        img = img.convert("L")  # Escala de grises
+
+        # Extraer texto con Tesseract
+        texto = pytesseract.image_to_string(img, lang="spa", config="--psm 6")
+        texto_upper = texto.upper()
+        lineas = [l.strip() for l in texto_upper.splitlines() if l.strip()]
+
+        resultado = {
+            "placa": "",
+            "modelo": "",
+            "municipio": "",
+            "texto_extraido": texto_upper
+        }
+
+        # Extraer placa (formato colombiano: 3 letras + 3 números)
+        placa_match = re.search(r'\b([A-Z]{3}[\s-]?\d{3})\b', texto_upper)
+        if placa_match:
+            resultado["placa"] = re.sub(r'[\s-]', '', placa_match.group(1))
+
+        # Extraer modelo (año entre 1970 y 2026)
+        modelo_match = re.search(r'\b(19[7-9]\d|20[0-2]\d)\b', texto_upper)
+        if modelo_match:
+            resultado["modelo"] = modelo_match.group(1)
+
+        # Extraer municipio buscando municipios conocidos de Antioquia
+        municipios_ant = [
+            "ANDES","APARTADO","BARBOSA","BELLO","CALDAS","CAREPA",
+            "CARMEN DE VIBORAL","CAUCASIA","CIUDAD BOLIVAR","COPACABANA",
+            "DEPARTAMENTAL","ENVIGADO","FRONTINO","GIRARDOTA","ITAGUI",
+            "LA CEJA","LA ESTRELLA","LA UNION","MARINILLA","MEDELLIN",
+            "PUERTO BERRIO","RIONEGRO","SABANETA","SANTA FE DE ANTIOQUIA",
+            "SANTA ROSA DE OSOS","SONSON","TURBO","URRAO","YARUMAL"
+        ]
+        for mun in municipios_ant:
+            if mun in texto_upper:
+                resultado["municipio"] = mun
+                break
+
+        # Si no encontró municipio por nombre exacto, buscar después de "ORGANISMO"
+        if not resultado["municipio"]:
+            org_match = re.search(r'ORGANISMO[:\s]+([A-Z\s]+?)(?:\n|$)', texto_upper)
+            if org_match:
+                resultado["municipio"] = org_match.group(1).strip()
+
+        return jsonify(resultado)
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
