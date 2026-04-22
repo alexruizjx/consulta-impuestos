@@ -833,7 +833,12 @@ def ocr_tarjeta():
 
         import json as json_lib
         texto_clean = texto.replace("```json", "").replace("```", "").strip()
-        resultado = json_lib.loads(texto_clean)
+        # Extraer solo el JSON con regex
+        import re as re_module
+        json_match = re_module.search(r'\{[^{}]*\}', texto_clean, re_module.DOTALL)
+        if not json_match:
+            return jsonify({"error": "No se pudo parsear respuesta de Claude", "raw": texto}), 500
+        resultado = json_lib.loads(json_match.group())
 
         return jsonify({
             "placa":     resultado.get("placa", "").upper().replace(" ", "").replace("-", ""),
