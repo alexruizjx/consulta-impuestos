@@ -755,7 +755,8 @@ def tramites_precio():
 @app.route("/debug-env", methods=["GET"])
 def debug_env():
     return jsonify({
-        "DATABASE_URL": os.environ.get("DATABASE_URL", "NO EXISTE")
+        "DATABASE_URL": os.environ.get("DATABASE_URL", "NO EXISTE"),
+        "ANTHROPIC_API_KEY": os.environ.get("ANTHROPIC_API_KEY", "NO EXISTE")
     })
 
 if __name__ == "__main__":
