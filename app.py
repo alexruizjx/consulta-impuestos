@@ -872,3 +872,12 @@ El municipio debe ser uno de estos: ANDES, APARTADO, BARBOSA, BELLO, CALDAS, CAR
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+ return jsonify({
+    "debug": texto,
+    "placa": resultado.get("placa", ""),
+    "modelo": resultado.get("modelo", ""),
+    "municipio": resultado.get("municipio", ""),
+    "cedula": resultado.get("cedula", ""),
+    "apellidos": resultado.get("apellidos", "")
+ })
