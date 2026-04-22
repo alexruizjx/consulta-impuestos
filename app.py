@@ -841,7 +841,7 @@ El municipio debe ser uno de estos (elige el más cercano): ANDES, APARTADO, BAR
         )
 
         if response.status_code != 200:
-            return jsonify({"error": f"Error Claude API: {response.status_code}"}), 500
+            return jsonify({"error": f"Error Claude API: {response.status_code} - {response.text}"}), 500
 
         resp_data = response.json()
         texto = resp_data["content"][0]["text"].strip()
