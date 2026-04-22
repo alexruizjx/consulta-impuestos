@@ -769,70 +769,96 @@ if __name__ == "__main__":
 
 # ── AGREGAR AL FINAL DE app.py ────────────────────────────────────────────────
 
+# ── REEMPLAZAR el endpoint /ocr-tarjeta en app.py ────────────────────────────
+
 @app.route("/ocr-tarjeta", methods=["POST"])
 def ocr_tarjeta():
-    """Recibe imagen base64 de tarjeta de propiedad y extrae los datos."""
+    """Recibe imagen base64 de tarjeta de propiedad y extrae los datos con Claude AI."""
     try:
         data = request.get_json()
         if not data or "imagen" not in data:
             return jsonify({"error": "No se recibió imagen"}), 400
 
-        # Decodificar base64
         img_data = data["imagen"]
+        media_type = "image/jpeg"
+
+        # Detectar tipo de imagen
+        if "data:image/png" in img_data:
+            media_type = "image/png"
+        elif "data:image/webp" in img_data:
+            media_type = "image/webp"
+
+        # Extraer solo el base64
         if "," in img_data:
             img_data = img_data.split(",")[1]
 
-        img_bytes = base64.b64decode(img_data)
-        img = Image.open(io.BytesIO(img_bytes))
+        # Llamar a Claude API
+        anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
+        if not anthropic_key:
+            return jsonify({"error": "API Key de Anthropic no configurada"}), 500
 
-        # Mejorar imagen para OCR
-        img = img.convert("L")  # Escala de grises
+        response = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key":         anthropic_key,
+                "anthropic-version": "2023-06-01",
+                "content-type":      "application/json",
+            },
+            json={
+                "model":      "claude-haiku-4-5",
+                "max_tokens": 500,
+                "messages": [{
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type":       "base64",
+                                "media_type": media_type,
+                                "data":       img_data,
+                            }
+                        },
+                        {
+                            "type": "text",
+                            "text": """Eres un experto en leer tarjetas de propiedad de vehículos colombianos.
+Analiza esta imagen y extrae EXACTAMENTE estos datos si los encuentras:
 
-        # Extraer texto con Tesseract
-        texto = pytesseract.image_to_string(img, lang="spa", config="--psm 6")
-        texto_upper = texto.upper()
-        import sys
-        print("OCR RESULTADO:", repr(texto_upper[:300]), flush=True, file=sys.stderr)
-        lineas = [l.strip() for l in texto_upper.splitlines() if l.strip()]
+1. PLACA: formato colombiano (3 letras + 3 números, ej: ABC123)
+2. MODELO: año del vehículo (4 dígitos, ej: 2015)
+3. MUNICIPIO: municipio de tránsito donde está matriculado
 
-        resultado = {
-            "placa": "",
-            "modelo": "",
-            "municipio": "",
-            "texto_extraido": texto_upper
-        }
+Responde ÚNICAMENTE en este formato JSON exacto, sin explicaciones:
+{"placa": "ABC123", "modelo": "2015", "municipio": "MEDELLIN"}
 
-        # Extraer placa (formato colombiano: 3 letras + 3 números)
-        placa_match = re.search(r'\b([A-Z]{3}[\s-]?\d{3})\b', texto_upper)
-        if placa_match:
-            resultado["placa"] = re.sub(r'[\s-]', '', placa_match.group(1))
+Si no encuentras algún dato, deja el campo vacío: ""
+El municipio debe ser uno de estos (elige el más cercano): ANDES, APARTADO, BARBOSA, BELLO, CALDAS, CAREPA, EL CARMEN DE VIBORAL, CAUCASIA, CIUDAD BOLIVAR, COPACABANA, DEPARTAMENTAL, ENVIGADO, FRONTINO, GIRARDOTA, ITAGUI, LA CEJA, LA ESTRELLA, LA UNION, MARINILLA, MEDELLIN, PUERTO BERRIO, RIONEGRO, SABANETA, SANTA FE DE ANTIOQUIA, SANTA ROSA DE OSOS, SONSON, TURBO, URRAO, YARUMAL"""
+                        }
+                    ]
+                }]
+            },
+            timeout=30
+        )
 
-        # Extraer modelo (año entre 1970 y 2026)
-        modelo_match = re.search(r'\b(19[7-9]\d|20[0-2]\d)\b', texto_upper)
-        if modelo_match:
-            resultado["modelo"] = modelo_match.group(1)
+        if response.status_code != 200:
+            return jsonify({"error": f"Error Claude API: {response.status_code}"}), 500
 
-        # Extraer municipio buscando municipios conocidos de Antioquia
-        municipios_ant = [
-            "ANDES","APARTADO","BARBOSA","BELLO","CALDAS","CAREPA",
-            "CARMEN DE VIBORAL","CAUCASIA","CIUDAD BOLIVAR","COPACABANA",
-            "DEPARTAMENTAL","ENVIGADO","FRONTINO","GIRARDOTA","ITAGUI",
-            "LA CEJA","LA ESTRELLA","LA UNION","MARINILLA","MEDELLIN",
-            "PUERTO BERRIO","RIONEGRO","SABANETA","SANTA FE DE ANTIOQUIA",
-            "SANTA ROSA DE OSOS","SONSON","TURBO","URRAO","YARUMAL"
-        ]
-        for mun in municipios_ant:
-            if mun in texto_upper:
-                resultado["municipio"] = mun
-                break
+        resp_data = response.json()
+        texto = resp_data["content"][0]["text"].strip()
 
-        # Si no encontró municipio por nombre exacto, buscar después de "ORGANISMO"
-        if not resultado["municipio"]:
-            org_match = re.search(r'ORGANISMO[:\s]+([A-Z\s]+?)(?:\n|$)', texto_upper)
-            if org_match:
-                resultado["municipio"] = org_match.group(1).strip()
+        # Limpiar y parsear JSON
+        import json
+        texto_clean = texto.replace("```json", "").replace("```", "").strip()
+        resultado = json.loads(texto_clean)
+
+        # Normalizar
+        resultado["placa"]     = resultado.get("placa", "").upper().replace(" ", "").replace("-", "")
+        resultado["modelo"]    = resultado.get("modelo", "").strip()
+        resultado["municipio"] = resultado.get("municipio", "").upper().strip()
 
         return jsonify(resultado)
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
