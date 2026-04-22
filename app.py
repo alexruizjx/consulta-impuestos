@@ -3,7 +3,7 @@ from PIL import Image
 import pytesseract
 import os
 import psycopg2
-import ref
+import re
 import time
 import requests
 import threading
