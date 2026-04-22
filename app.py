@@ -831,7 +831,9 @@ Analiza esta imagen y extrae EXACTAMENTE estos datos:
 5. APELLIDOS: apellidos del propietario en mayúsculas
 
 En la tarjeta de propiedad colombiana busca:
-- La cédula aparece como "C.C.", "CEDULA", "IDENTIFICACION" o "NIT" seguido del número
+- La cédula/identificación aparece exactamente como "IDENTIFICACION" seguido del número en la tarjeta
+- También puede aparecer como "C.C.", "NIT", "CEDULA"
+- Es un número largo de 8 a 10 dígitos
 - Los apellidos aparecen en el nombre del propietario (generalmente las dos primeras palabras)
 - El municipio aparece como "ORGANISMO DE TRANSITO", "MUNICIPIO" o "CIUDAD"
 
