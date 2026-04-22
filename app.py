@@ -864,20 +864,10 @@ El municipio debe ser uno de estos: ANDES, APARTADO, BARBOSA, BELLO, CALDAS, CAR
         resultado["placa"]     = resultado.get("placa", "").upper().replace(" ", "").replace("-", "")
         resultado["modelo"]    = resultado.get("modelo", "").strip()
         resultado["municipio"] = resultado.get("municipio", "").upper().strip()
+        resultado["cedula"]    = resultado.get("cedula", "").strip()
+        resultado["apellidos"] = resultado.get("apellidos", "").upper().strip()
 
         return jsonify(resultado)
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
- return jsonify({
-    "debug": texto,
-    "placa": resultado.get("placa", ""),
-    "modelo": resultado.get("modelo", ""),
-    "municipio": resultado.get("municipio", ""),
-    "cedula": resultado.get("cedula", ""),
-    "apellidos": resultado.get("apellidos", "")
- })
