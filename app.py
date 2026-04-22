@@ -2,8 +2,8 @@ import base64, re, io
 from PIL import Image
 import pytesseract
 import os
-import psycopg2
-import re
+import psycopg2f
+import ref
 import time
 import requests
 import threading
@@ -867,7 +867,14 @@ El municipio debe ser uno de estos: ANDES, APARTADO, BARBOSA, BELLO, CALDAS, CAR
         resultado["cedula"]    = resultado.get("cedula", "").strip()
         resultado["apellidos"] = resultado.get("apellidos", "").upper().strip()
 
-        return jsonify(resultado)
+        return jsonify({
+             "placa":     resultado.get("placa", ""),
+              "modelo":    resultado.get("modelo", ""),
+              "municipio": resultado.get("municipio", ""),
+              "cedula":    resultado.get("cedula", ""),
+              "apellidos": resultado.get("apellidos", ""),
+               "raw":       texto
+        })
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
