@@ -791,6 +791,7 @@ def ocr_tarjeta():
         # Extraer texto con Tesseract
         texto = pytesseract.image_to_string(img, lang="spa", config="--psm 6")
         texto_upper = texto.upper()
+        print("TEXTO OCR:", texto_upper[:500])
         lineas = [l.strip() for l in texto_upper.splitlines() if l.strip()]
 
         resultado = {
