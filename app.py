@@ -774,7 +774,6 @@ if __name__ == "__main__":
 
 @app.route("/ocr-tarjeta", methods=["POST"])
 def ocr_tarjeta():
-    """Recibe imagen base64 de tarjeta de propiedad y extrae los datos con Claude AI."""
     try:
         data = request.get_json()
         if not data or "imagen" not in data:
@@ -783,17 +782,14 @@ def ocr_tarjeta():
         img_data = data["imagen"]
         media_type = "image/jpeg"
 
-        # Detectar tipo de imagen
         if "data:image/png" in img_data:
             media_type = "image/png"
         elif "data:image/webp" in img_data:
             media_type = "image/webp"
 
-        # Extraer solo el base64
         if "," in img_data:
             img_data = img_data.split(",")[1]
 
-        # Llamar a Claude API
         anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
         if not anthropic_key:
             return jsonify({"error": "API Key de Anthropic no configurada"}), 500
@@ -801,9 +797,9 @@ def ocr_tarjeta():
         response = requests.post(
             "https://api.anthropic.com/v1/messages",
             headers={
-                "x-api-key":         anthropic_key,
+                "x-api-key": anthropic_key,
                 "anthropic-version": "2023-06-01",
-                "content-type":      "application/json",
+                "content-type": "application/json",
             },
             json={
                 "model": "claude-opus-4-5",
@@ -814,34 +810,14 @@ def ocr_tarjeta():
                         {
                             "type": "image",
                             "source": {
-                                "type":       "base64",
+                                "type": "base64",
                                 "media_type": media_type,
-                                "data":       img_data,
+                                "data": img_data,
                             }
                         },
                         {
                             "type": "text",
-                            "text": """Eres un experto en leer tarjetas de propiedad de vehículos colombianos.
-Analiza esta imagen y extrae EXACTAMENTE estos datos:
-
-1. PLACA: formato colombiano (3 letras + 3 números, ej: ABC123)
-2. MODELO: año del vehículo (4 dígitos, ej: 2015)
-3. MUNICIPIO: municipio de tránsito donde está matriculado
-4. CEDULA: número de cédula del propietario (solo números, sin puntos ni comas)
-5. APELLIDOS: apellidos del propietario en mayúsculas
-
-En la tarjeta de propiedad colombiana busca:
-- La cédula/identificación aparece exactamente como "IDENTIFICACION" seguido del número en la tarjeta
-- También puede aparecer como "C.C.", "NIT", "CEDULA"
-- Es un número largo de 8 a 10 dígitos
-- Los apellidos aparecen en el nombre del propietario (generalmente las dos primeras palabras)
-- El municipio aparece como "ORGANISMO DE TRANSITO", "MUNICIPIO" o "CIUDAD"
-
-Responde ÚNICAMENTE en este formato JSON exacto, sin explicaciones:
-{"placa": "ABC123", "modelo": "2015", "municipio": "MEDELLIN", "cedula": "1128402520", "apellidos": "LOPEZ AGUDELO"}
-
-Si no encuentras algún dato, deja el campo vacío: ""
-El municipio debe ser uno de estos: ANDES, APARTADO, BARBOSA, BELLO, CALDAS, CAREPA, EL CARMEN DE VIBORAL, CAUCASIA, CIUDAD BOLIVAR, COPACABANA, DEPARTAMENTAL, ENVIGADO, FRONTINO, GIRARDOTA, ITAGUI, LA CEJA, LA ESTRELLA, LA UNION, MARINILLA, MEDELLIN, PUERTO BERRIO, RIONEGRO, SABANETA, SANTA FE DE ANTIOQUIA, SANTA ROSA DE OSOS, SONSON, TURBO, URRAO, YARUMAL"""
+                            "text": "Eres un experto en leer tarjetas de propiedad de vehiculos colombianos. Analiza esta imagen y extrae: 1. PLACA (3 letras + 3 numeros) 2. MODELO (año 4 digitos) 3. MUNICIPIO de transito 4. CEDULA o IDENTIFICACION del propietario (solo numeros) 5. APELLIDOS del propietario. Responde SOLO en JSON: {\"placa\": \"\", \"modelo\": \"\", \"municipio\": \"\", \"cedula\": \"\", \"apellidos\": \"\"}. El municipio debe ser uno de: ANDES, APARTADO, BARBOSA, BELLO, CALDAS, CAREPA, EL CARMEN DE VIBORAL, CAUCASIA, CIUDAD BOLIVAR, COPACABANA, DEPARTAMENTAL, ENVIGADO, FRONTINO, GIRARDOTA, ITAGUI, LA CEJA, LA ESTRELLA, LA UNION, MARINILLA, MEDELLIN, PUERTO BERRIO, RIONEGRO, SABANETA, SANTA FE DE ANTIOQUIA, SANTA ROSA DE OSOS, SONSON, TURBO, URRAO, YARUMAL"
                         }
                     ]
                 }]
@@ -855,26 +831,18 @@ El municipio debe ser uno de estos: ANDES, APARTADO, BARBOSA, BELLO, CALDAS, CAR
         resp_data = response.json()
         texto = resp_data["content"][0]["text"].strip()
 
-        # Limpiar y parsear JSON
-        import json
+        import json as json_lib
         texto_clean = texto.replace("```json", "").replace("```", "").strip()
-        resultado = json.loads(texto_clean)
-
-        # Normalizar
-        resultado["placa"]     = resultado.get("placa", "").upper().replace(" ", "").replace("-", "")
-        resultado["modelo"]    = resultado.get("modelo", "").strip()
-        resultado["municipio"] = resultado.get("municipio", "").upper().strip()
-        resultado["cedula"]    = resultado.get("cedula", "").strip()
-        resultado["apellidos"] = resultado.get("apellidos", "").upper().strip()
+        resultado = json_lib.loads(texto_clean)
 
         return jsonify({
-             "placa":     resultado.get("placa", ""),
-              "modelo":    resultado.get("modelo", ""),
-              "municipio": resultado.get("municipio", ""),
-              "cedula":    resultado.get("cedula", ""),
-              "apellidos": resultado.get("apellidos", ""),
-               "raw":       texto
+            "placa":     resultado.get("placa", "").upper().replace(" ", "").replace("-", ""),
+            "modelo":    resultado.get("modelo", "").strip(),
+            "municipio": resultado.get("municipio", "").upper().strip(),
+            "cedula":    resultado.get("cedula", "").strip(),
+            "apellidos": resultado.get("apellidos", "").upper().strip(),
+            "raw":       texto
         })
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": str(e)}), 500onify({"error": str(e)}), 500
