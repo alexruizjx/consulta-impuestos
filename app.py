@@ -2,7 +2,7 @@ import base64, re, io
 from PIL import Image
 import pytesseract
 import os
-import psycopg2f
+import psycopg2
 import ref
 import time
 import requests
