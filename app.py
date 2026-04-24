@@ -363,7 +363,7 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
             "idTipoIdentificacion": tipo_documento,
             "identificacion":       identificacion,
         },
-        timeout=30
+        timeout=120
     )
     data1 = r1.json()
     referencia = data1.get("referencia")
