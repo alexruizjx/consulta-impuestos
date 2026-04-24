@@ -935,3 +935,22 @@ def ocr_tarjeta():
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/ocr-guardar-municipio", methods=["POST"])
+def ocr_guardar_municipio():
+    try:
+        data = request.get_json()
+        placa = data.get("placa", "").upper().strip()
+        municipio = data.get("municipio", "").upper().strip()
+        if not placa or not municipio:
+            return jsonify({"ok": False}), 400
+        conn = get_db_conn()
+        cur = conn.cursor()
+        cur.execute("UPDATE cache_tarjetas SET municipio=%s, actualizado_en=NOW() WHERE placa=%s", (municipio, placa))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
