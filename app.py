@@ -389,7 +389,7 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
                 "respuestaNombrePropietario": nombre_encontrado,
             }
         },
-        timeout=30
+        timeout=120
     )
     if r2.json().get("codigo") != 1:
         raise Exception("Cuestionario incorrecto. Verifica modelo, municipio y apellidos.")
@@ -409,7 +409,7 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
             "idTipoIdentificacion": tipo_documento
         }},
         headers={"Cookie": f"token_cuestionario={token_cuestionario}"},
-        timeout=30
+        timeout=120
     )
     data3 = r3.json()
 
@@ -433,18 +433,18 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
             f"{ANTIOQUIA_API}/UsuariosPortalAntioquia/consultarPropietarioVehiculo",
             json={"tipoDoc": "CC", "nroDoc": identificacion, "placa": placa, "vigencia": anio},
             headers={"Cookie": f"token_cuestionario={token_cuestionario}"},
-            timeout=30
+            timeout=120
         )
         propietario = r4.json().get("propietario", {})
 
         session.post(f"{ANTIOQUIA_API}/TablasTipo/obtenerTablasPropietario", json={},
-                     headers={"Cookie": f"token_cuestionario={token_cuestionario}"}, timeout=30)
+                     headers={"Cookie": f"token_cuestionario={token_cuestionario}"}, timeout=120)
         session.get(f"{ANTIOQUIA_API}/UtilImpuestos/obtenerDescripcionPPST",
-                    headers={"Cookie": f"token_cuestionario={token_cuestionario}"}, timeout=30)
+                    headers={"Cookie": f"token_cuestionario={token_cuestionario}"}, timeout=120)
         session.post(f"{ANTIOQUIA_API}/Pagos/parametrosPago", json={},
-                     headers={"Cookie": f"token_cuestionario={token_cuestionario}"}, timeout=30)
+                     headers={"Cookie": f"token_cuestionario={token_cuestionario}"}, timeout=120)
         session.get(f"{ANTIOQUIA_API}/UtilImpuestos/obtenerVigenciaMinimaAutodeclarar",
-                    headers={"Cookie": f"token_cuestionario={token_cuestionario}"}, timeout=30)
+                    headers={"Cookie": f"token_cuestionario={token_cuestionario}"}, timeout=120)
 
         token4 = resolver_turnstile_2captcha(ANTIOQUIA_SITE_KEY, ANTIOQUIA_URL)
         session.headers.update({"captcha": token4})
@@ -483,7 +483,7 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
                 "placa":    placa,
                 "vigencia": [{"persl": anio}]
             },
-            timeout=30
+            timeout=120
         )
         data5 = r5.json()
         return data5.get("totalPagar", 0), data5.get("avaluoComercial", avaluo)
@@ -856,7 +856,7 @@ def ocr_tarjeta():
                     ]
                 }]
             },
-            timeout=30
+            timeout=120
         )
 
         if response.status_code != 200:
