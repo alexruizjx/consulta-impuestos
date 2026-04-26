@@ -543,6 +543,7 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
         timeout=120
     )
     data1 = r1.json()
+    print(f"DATA1 NIT: {data1}", flush=True, file=sys.stderr)
     referencia = data1.get("referencia")
 
     opciones_nombre = data1.get("preguntaNombrePropietario", {}).get("opcionesPregunta", [])
