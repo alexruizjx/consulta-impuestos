@@ -657,7 +657,7 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
 
         r4 = session.post(
             f"{ANTIOQUIA_API}/UsuariosPortalAntioquia/consultarPropietarioVehiculo",
-            json={"tipoDoc": "CC", "nroDoc": identificacion, "placa": placa, "vigencia": anio},
+            json={"tipoDoc": tipo_documento, "nroDoc": identificacion, "placa": placa, "vigencia": anio},
             headers={"Cookie": f"token_cuestionario={token_cuestionario}"},
             timeout=120
         )
