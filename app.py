@@ -608,6 +608,7 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
     periodo_calc = date(anio_actual, 1, 1) <= hoy <= date(anio_actual, 7, 31)
     print(f"DEBUG: solo_actual={solo_actual} periodo_calc={periodo_calc} vigencias={[v.get('vigencia') for v in vigencias_adeudadas]}", flush=True)
     if solo_actual and periodo_calc:
+        print(f"DEBUG CALCULO LOCAL INICIADO")
         try:
             conn_c = get_db_conn()
             cur_c  = conn_c.cursor()
@@ -640,7 +641,7 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
 
         except Exception as e_calc:
             print(f"Error calculo local: {e_calc}", flush=True)
-
+            print(f"DEBUG ANTES VIGENCIAS: len={len(vigencias_adeudadas)} solo_actual={solo_actual} periodo_calc={periodo_calc}")
     if not vigencias_adeudadas:
         try:
             anio_actual = datetime.now().year
