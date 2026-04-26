@@ -648,7 +648,7 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
         return [], 0, avaluo, estado, False
 
     total_vigencias = len(vigencias_adeudadas)
-    LIMITE = 1
+    LIMITE = 5
 
     def liquidar_vigencia(anio):
         """Liquida una vigencia y retorna (total, avaluo)."""
