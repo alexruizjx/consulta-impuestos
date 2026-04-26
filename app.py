@@ -18,7 +18,6 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 TIMEOUT = 10000
 MSG_NO_MATRICULADO = "El vehiculo no se encuentra matriculado en la Secretaria de Movilidad"
 AÑO_ACTUAL = str(datetime.now().year)
-
 # ── Captcha ──
 TWOCAPTCHA_API_KEY = "47a18b883a00d513b2c78b0ac2cd0f00"
 EMTRASUR_SITE_KEY  = "6Leshn4sAAAAAIas9tkeW3vKPg0a4uYqw-7fG7Pn"
@@ -717,7 +716,7 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
     # ── Paz y salvo ──────────────────────────────────────────────────────────
     if not vigencias_adeudadas:
         try:
-            anio_actual = datetime.now().year
+            anio_actual = datetime.now().year)
             guardar_cache_impuesto_antioquia(placa, anio_actual, estado, sin_deuda=True)
         except Exception as e_cache:
             print(f"Error cache paz y salvo: {e_cache}")
