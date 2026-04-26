@@ -716,7 +716,7 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
     # ── Paz y salvo ──────────────────────────────────────────────────────────
     if not vigencias_adeudadas:
         try:
-            anio_actual = datetime.now().year)
+            anio_actual = datetime.now().year
             guardar_cache_impuesto_antioquia(placa, anio_actual, estado, sin_deuda=True)
         except Exception as e_cache:
             print(f"Error cache paz y salvo: {e_cache}")
