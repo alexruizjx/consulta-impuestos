@@ -815,7 +815,12 @@ def consultar():
 
     # ── Extraer parámetros ANTES del hilo ──
     identificacion     = request.args.get("identificacion", "").strip()
-    tipo_documento     = request.args.get("tipo_documento", "1").strip()
+    tipo_documento_raw = request.args.get("tipo_documento", "CC").strip() or "CC"
+    # Convertir abreviatura al id numerico que espera Antioquia
+    TIPO_DOC_MAP = {
+    "CC": 1, "NIT": 2, "CE": 5, "TI": 6, "RC": 7, "CD": 8, "PPT": 29
+    }
+    tipo_documento = TIPO_DOC_MAP.get(tipo_documento_raw.upper(), 1)
     modelo             = request.args.get("modelo", "").strip()
     municipio_transito = request.args.get("municipio_transito", "").upper().strip()
     apellidos          = request.args.get("apellidos_propietario", "").upper().strip()
