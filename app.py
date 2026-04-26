@@ -476,7 +476,51 @@ def impuesto_antioquia_cache():
 
 def consultar_antioquia(page, placa, identificacion, tipo_documento,
                         modelo, municipio_transito, apellidos_propietario):
+                            
+    # Verificar cache primero — si hay datos guardados devolver inmediatamente
+    try:
+        conn_c = get_db_conn()
+        cur_c  = conn_c.cursor()
+        cur_c.execute("""
+            SELECT vigencia, total_pagar, avaluo_comercial, estado
+            FROM cache_impuestos_antioquia
+            WHERE placa = %s
+            ORDER BY vigencia DESC
+        """, (placa,))
+        rows_c = cur_c.fetchall()
+        cur_c.close()
+        conn_c.close()
 
+        if rows_c:
+            # Construir registros desde caché
+            registros_cache = []
+            total_cache     = 0
+            avaluo_cache    = 0
+
+            for i, row in enumerate(rows_c):
+                anio_c, total_c, avaluo_c, estado_c = row
+                if i == 0:
+                    total_cache  = total_c or 0
+                    avaluo_cache = avaluo_c or 0
+
+                # Si estado es PAZ_Y_SALVO devolver sin deuda
+                if estado_c == 'PAZ_Y_SALVO':
+                    return [], 0, avaluo_cache, {}, False
+
+                registros_cache.append({
+                    "vigencia":       str(anio_c),
+                    "estado":         "Pendiente de pago",
+                    "total_vigencia": total_c,
+                })
+
+            excede = len(rows_c) > 1
+            return registros_cache, total_cache, avaluo_cache, {}, excede
+
+    except Exception as e_cache_init:
+        print(f"Error consultando cache inicial: {e_cache_init}")
+        # Si falla el cache, continuar con consulta normal
+
+    # Paso 1 — Resolver Turnstile
     # Paso 1 — Resolver Turnstile
     token = resolver_turnstile_2captcha(ANTIOQUIA_SITE_KEY, ANTIOQUIA_URL)
 
