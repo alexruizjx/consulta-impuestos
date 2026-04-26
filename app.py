@@ -585,7 +585,7 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
                 )
                 data5 = r5.json()
                 # DEBUG TEMPORAL — borrar despues
-                 try:
+         try:
                     conn_d = get_db_conn()
                     cur_d = conn_d.cursor()
                     cur_d.execute("CREATE TABLE IF NOT EXISTS debug_data5 (id SERIAL, placa VARCHAR, data TEXT, creado TIMESTAMP DEFAULT NOW())")
@@ -594,8 +594,8 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
                       conn_d.commit()
                       cur_d.close()
                       conn_d.close()
-                 except Exception as e_d:
-                       pass
+         except Exception as e_d:
+               pass
 
 
 
