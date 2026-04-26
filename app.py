@@ -419,6 +419,11 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
     avaluo              = estado.get("avaluoComercial", 0) or 0
 
     if not vigencias_adeudadas:
+        try:
+            anio_actual = datetime.now().year
+            guardar_cache_impuesto_antioquia(placa, anio_actual, estado, sin_deuda=True)
+        except Exception as e_cache:
+            print(f"Error cache paz y salvo: {e_cache}")
         return [], 0, avaluo, estado, False
 
     total_vigencias = len(vigencias_adeudadas)
@@ -486,6 +491,13 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
             timeout=120
         )
         data5 = r5.json()
+
+        # Guardar en cache
+        try:
+            guardar_cache_impuesto_antioquia(placa, anio, data5, sin_deuda=False)
+        except Exception as e_cache:
+            print(f"Error cache impuesto: {e_cache}")
+
         return data5.get("totalPagar", 0), data5.get("avaluoComercial", avaluo)
 
     # Vigencia más reciente
