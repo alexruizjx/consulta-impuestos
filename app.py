@@ -354,6 +354,16 @@ def guardar_cache_impuesto_antioquia(placa, vigencia, declaracion, sin_deuda=Fal
         avaluo      = int(declaracion.get("avaluoComercial", 0) or 0)
         retefuente  = round(avaluo / 100) if avaluo else 0
         estado      = "PAZ_Y_SALVO" if sin_deuda else "PENDIENTE"
+        
+        # Fecha de expiracion
+        anio_actual = datetime.now().year
+        if sin_deuda:
+            # Paz y salvo expira el 31 de diciembre del año actual
+            from datetime import date
+            expira_en = date(anio_actual, 12, 31)
+        else:
+            # Deuda no expira por ahora (pendiente de definir reglas)
+            expira_en = None
 
         cur.execute("""
             INSERT INTO cache_impuestos_antioquia (
@@ -363,7 +373,7 @@ def guardar_cache_impuesto_antioquia(placa, vigencia, declaracion, sin_deuda=Fal
                 intereses_mora, intereses_con_desc, descuento_intereses,
                 descuento_pronto_pago, pagos_anteriores, otros_pagos,
                 total_cargo, saldo_pagar, total_pagar, saldo_favor,
-                retefuente, aplica_beneficio, estado, actualizado_en
+                retefuente, aplica_beneficio, estado, actualizado_en, expira_en
             ) VALUES (
                 %s, %s, %s,
                 %s, %s, %s,
@@ -371,7 +381,7 @@ def guardar_cache_impuesto_antioquia(placa, vigencia, declaracion, sin_deuda=Fal
                 %s, %s, %s,
                 %s, %s, %s,
                 %s, %s, %s, %s,
-                %s, %s, %s, NOW()
+                %s, %s, %s, NOW(), %s
             )
             ON CONFLICT (placa, vigencia) DO UPDATE SET
                 formulario_liquidacion = EXCLUDED.formulario_liquidacion,
@@ -395,6 +405,7 @@ def guardar_cache_impuesto_antioquia(placa, vigencia, declaracion, sin_deuda=Fal
                 retefuente             = EXCLUDED.retefuente,
                 aplica_beneficio       = EXCLUDED.aplica_beneficio,
                 estado                 = EXCLUDED.estado,
+                expira_en              = EXCLUDED.expira_en,
                 actualizado_en         = NOW()
         """, (
             placa.upper(), vigencia,
@@ -418,7 +429,8 @@ def guardar_cache_impuesto_antioquia(placa, vigencia, declaracion, sin_deuda=Fal
             int(declaracion.get("saldoFavor",        0) or 0),
             retefuente,
             str(declaracion.get("aplicaBeneficioTributario", "") or ""),
-            estado
+            estado,
+            expira_en
         ))
 
         conn.commit()
@@ -485,6 +497,7 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
             SELECT vigencia, total_pagar, avaluo_comercial, estado
             FROM cache_impuestos_antioquia
             WHERE placa = %s
+            AND (expira_en IS NULL OR expira_en >= CURRENT_DATE)
             ORDER BY vigencia DESC
         """, (placa,))
         rows_c = cur_c.fetchall()
