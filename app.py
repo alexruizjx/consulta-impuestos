@@ -584,25 +584,6 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
                     timeout=120
                 )
                 data5 = r5.json()
-                # DEBUG TEMPORAL — borrar despues
-         try:
-                    conn_d = get_db_conn()
-                    cur_d = conn_d.cursor()
-                    cur_d.execute("CREATE TABLE IF NOT EXISTS debug_data5 (id SERIAL, placa VARCHAR, data TEXT, creado TIMESTAMP DEFAULT NOW())")
-                     import json as _json
-                      cur_d.execute("INSERT INTO debug_data5 (placa, data) VALUES (%s, %s)", (placa, _json.dumps(data5)))
-                      conn_d.commit()
-                      cur_d.close()
-                      conn_d.close()
-         except Exception as e_d:
-               pass
-
-
-
-                
-                
-                print(f"DATA5 completo: {data5}")
-                print(f"DATA5: totalPagar={data5.get('totalPagar')} saldoPagar={data5.get('saldoPagar')} avaluo={data5.get('avaluoComercial')}")
                 print(f"DECLARACION vigencia={anio} total={data5.get('totalPagar')} saldo={data5.get('saldoPagar')}")
                 try:
                     guardar_cache_impuesto_antioquia(placa, anio, data5, sin_deuda=False)
