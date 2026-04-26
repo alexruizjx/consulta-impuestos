@@ -356,13 +356,16 @@ def guardar_cache_impuesto_antioquia(placa, vigencia, declaracion, sin_deuda=Fal
         estado      = "PAZ_Y_SALVO" if sin_deuda else "PENDIENTE"
         
         # Fecha de expiracion
-        anio_actual = datetime.now().year
+        from datetime import date, timedelta
+        hoy_d       = date.today()
+        anio_actual = hoy_d.year
         if sin_deuda:
-            # Paz y salvo expira el 31 de diciembre del año actual
-            from datetime import date
             expira_en = date(anio_actual, 12, 31)
+        elif vigencia < anio_actual:
+            expira_en = hoy_d + timedelta(days=30)
+        elif hoy_d >= date(anio_actual, 8, 1):
+            expira_en = hoy_d + timedelta(days=30)
         else:
-            # Deuda no expira por ahora (pendiente de definir reglas)
             expira_en = None
 
         cur.execute("""
