@@ -495,38 +495,18 @@ def impuesto_antioquia_cache():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-def consultar_antioquia(page, placa, identificacion, tipo_documento,
-                        modelo, municipio_transito, apellidos_propietario):
-                            
-    # Verificar cache primero — si hay datos guardados devolver inmediatamente
-    try:
-        conn_c = get_db_conn()
-        cur_c  = conn_c.cursor()
-        cur_c.execute("""
-            SELECT vigencia, total_pagar, avaluo_comercial, estado
-            FROM cache_impuestos_antioquia
-            WHERE placa = %s
-            AND (expira_en IS NULL OR expira_en >= CURRENT_DATE)
-            ORDER BY vigencia DESC
-        """, (placa,))
-        rows_c = cur_c.fetchall()
-        cur_c.close()
-        conn_c.close()
-        print(f"CACHE INICIAL {placa}: {rows_c}")  # <-- agregar aqui
+# ── REEMPLAZAR LA FUNCIÓN consultar_antioquia EN app.py ──────────────────────
+# Configuración del límite de vigencias — cambiar solo este número
+ANTIOQUIA_LIMITE_VIGENCIAS = 1  # 1 = solo vigencia más reciente, 5 = hasta 5 vigencias
 
-        if rows_c:
-            # Cache inicial SOLO aplica para paz y salvo total
-            todas_paz = all(r[3] == 'PAZ_Y_SALVO' for r in rows_c)
-            if todas_paz:
-                avaluo_cache = rows_c[0][2] or 0
-                return [], 0, avaluo_cache, {}, False
-            # Si tiene deuda, NO devolver desde cache
-            # Continuar con consulta completa a Antioquia
-
-    except Exception as e_cache_init:
-        print(f"Error consultando cache inicial: {e_cache_init}", flush=True)
-
-    # Paso 1 — Resolver Turnstile
+def iniciar_sesion_antioquia(placa, identificacion, tipo_documento,
+                              modelo, municipio_transito, apellidos_propietario):
+    """
+    Realiza los pasos 1-3 del portal de Antioquia.
+    Retorna (session, token_cuestionario, data3) o lanza Exception.
+    Costo: 2 Turnstiles.
+    """
+    # Paso 1 — Primer Turnstile
     token = resolver_turnstile_2captcha(ANTIOQUIA_SITE_KEY, ANTIOQUIA_URL)
 
     session = requests.Session()
@@ -539,7 +519,7 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
         "User-Agent":       "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Mobile Safari/537.36",
     })
 
-    # Paso 2 — Obtener cuestionario
+    # Paso 2 — Cuestionario
     r1 = session.post(
         f"{ANTIOQUIA_API}/ConsultarEstadoCuentaImpAntioquia/obtenerCuestionarioEstadoCuenta",
         json={
@@ -550,7 +530,6 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
         timeout=120
     )
     data1 = r1.json()
-    print(f"DATA1 NIT: {data1}", flush=True)
     referencia = data1.get("referencia")
 
     opciones_nombre = data1.get("preguntaNombrePropietario", {}).get("opcionesPregunta", [])
@@ -579,7 +558,7 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
     if r2.json().get("codigo") != 1:
         raise Exception("Cuestionario incorrecto. Verifica modelo, municipio y apellidos.")
 
-    # Paso 4 — Segundo Turnstile y estado de cuenta
+    # Paso 4 — Segundo Turnstile + estado de cuenta
     token2 = resolver_turnstile_2captcha(ANTIOQUIA_SITE_KEY, ANTIOQUIA_URL)
     session.headers.update({"captcha": token2})
 
@@ -597,25 +576,162 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
         timeout=120
     )
     data3 = r3.json()
-    print(f"DATA3 IUS96G: vigencias={data3.get('listaVigenciasAdeudas')} estado={data3.get('estadoCuenta')}")
-    print("VIGENCIAS ADEUDADAS:", data3.get("listaVigenciasAdeudas", []))                        
+    return session, token_cuestionario, data3
+
+
+def liquidar_vigencia_sesion(anio, session, token_cuestionario,
+                              placa, identificacion, tipo_documento, avaluo_base):
+    """
+    Liquida una vigencia usando una sesión ya iniciada.
+    Costo: 2 Turnstiles adicionales.
+    Retorna (total_pagar, avaluo_comercial).
+    """
+    TIPO_DOC_DESC = {
+        "1":  "Cedula de Ciudadania",
+        "2":  "NIT",
+        "5":  "Cedula de Extranjeria",
+        "6":  "Tarjeta de Identidad",
+        "7":  "Registro Civil",
+        "8":  "Carnet Diplomatico",
+        "29": "Permiso por Proteccion Temporal",
+    }
+
+    # Paso 5 — Tercer Turnstile + propietario
+    token3 = resolver_turnstile_2captcha(ANTIOQUIA_SITE_KEY, ANTIOQUIA_URL)
+    session.headers.update({"captcha": token3})
+
+    r4 = session.post(
+        f"{ANTIOQUIA_API}/UsuariosPortalAntioquia/consultarPropietarioVehiculo",
+        json={"tipoDoc": str(tipo_documento), "nroDoc": identificacion,
+              "placa": placa, "vigencia": anio},
+        headers={"Cookie": f"token_cuestionario={token_cuestionario}"},
+        timeout=120
+    )
+    r4_data    = r4.json() if r4.content else {}
+    propietario = r4_data.get("propietario", {}) if r4_data else {}
+
+    session.post(f"{ANTIOQUIA_API}/TablasTipo/obtenerTablasPropietario", json={},
+                 headers={"Cookie": f"token_cuestionario={token_cuestionario}"}, timeout=120)
+    session.get(f"{ANTIOQUIA_API}/UtilImpuestos/obtenerDescripcionPPST",
+                headers={"Cookie": f"token_cuestionario={token_cuestionario}"}, timeout=120)
+    session.post(f"{ANTIOQUIA_API}/Pagos/parametrosPago", json={},
+                 headers={"Cookie": f"token_cuestionario={token_cuestionario}"}, timeout=120)
+    session.get(f"{ANTIOQUIA_API}/UtilImpuestos/obtenerVigenciaMinimaAutodeclarar",
+                headers={"Cookie": f"token_cuestionario={token_cuestionario}"}, timeout=120)
+
+    # Paso 6 — Cuarto Turnstile + declaración
+    token4 = resolver_turnstile_2captcha(ANTIOQUIA_SITE_KEY, ANTIOQUIA_URL)
+    session.headers.update({"captcha": token4})
+    session.cookies.clear()
+
+    r5 = session.post(
+        f"{ANTIOQUIA_API}/LiquidacionAntioquia/crearDeclaracionImpuestoAnt",
+        json={
+            "formularioLiquidacion": "",
+            "declarante": {
+                "idsolicitante":    identificacion,
+                "idtipodocumento":  str(tipo_documento),
+                "desctipodocument": TIPO_DOC_DESC.get(str(tipo_documento), "Cedula de Ciudadania"),
+                "nombres":          propietario.get("nameFirst", ""),
+                "apellidos":        propietario.get("nameLast", ""),
+                "celular":          "3000000000",
+                "telefono":         "3000000000",
+                "email":            "consulta@consulta.com",
+                "direccion":        "CRA",
+                "municipio":        "MEDELLIN",
+                "departamento":     "ANTIOQUIA",
+                "nivreclamacion":   0,
+                "procedimiento":    ""
+            },
+            "iIdliqIm": 0,
+            "informacionComplementaria": {
+                "idTipoDocumento":               1,
+                "distribucionDepartamento":      5,
+                "distribucionMunicipio":         5001000,
+                "direccionCompleta":             "CRA",
+                "nombreDistribucionDepartamento": "ANTIOQUIA",
+                "nombreDistribucionMunicipio":   "MEDELLIN",
+                "tipoCanalLiquidacion":          2,
+                "tipoOpcionLiquidacion":         1
+            },
+            "placa":    placa,
+            "vigencia": [{"persl": anio}]
+        },
+        timeout=120
+    )
+    data5 = r5.json()
+    print(f"DECLARACION vigencia {anio}: totalPagar={data5.get('totalPagar')} saldoPagar={data5.get('saldoPagar')}")
+
+    # Guardar en caché
+    try:
+        guardar_cache_impuesto_antioquia(placa, anio, data5, sin_deuda=False)
+    except Exception as e_cache:
+        print(f"Error cache impuesto: {e_cache}")
+
+    total = data5.get("totalPagar", 0) or data5.get("saldoPagar", 0) or 0
+    av    = data5.get("avaluoComercial", 0) or avaluo_base
+    return total, av
+
+
+def consultar_antioquia(page, placa, identificacion, tipo_documento,
+                        modelo, municipio_transito, apellidos_propietario):
+
+    # ── Caché inicial — solo para paz y salvo ────────────────────────────────
+    try:
+        conn_c = get_db_conn()
+        cur_c  = conn_c.cursor()
+        cur_c.execute("""
+            SELECT vigencia, total_pagar, avaluo_comercial, estado
+            FROM cache_impuestos_antioquia
+            WHERE placa = %s
+            AND (expira_en IS NULL OR expira_en >= CURRENT_DATE)
+            ORDER BY vigencia DESC
+        """, (placa,))
+        rows_c = cur_c.fetchall()
+        cur_c.close()
+        conn_c.close()
+
+        if rows_c:
+            todas_paz = all(r[3] == 'PAZ_Y_SALVO' for r in rows_c)
+            if todas_paz:
+                avaluo_cache = rows_c[0][2] or 0
+                return [], 0, avaluo_cache, {}, False
+            # Con deuda — continuar consulta completa
+
+    except Exception as e_cache_init:
+        print(f"Error cache inicial: {e_cache_init}")
+
+    # ── Sesión inicial — pasos 1-4 (2 Turnstiles) ────────────────────────────
+    session0, token0, data3 = iniciar_sesion_antioquia(
+        placa, identificacion, tipo_documento,
+        modelo, municipio_transito, apellidos_propietario
+    )
 
     estado              = data3.get("estadoCuenta", {})
     vigencias_adeudadas = data3.get("listaVigenciasAdeudas", [])
     procesos_fiscales   = data3.get("listaProcesoFiscal", [])
     avaluo              = estado.get("avaluoComercial", 0) or 0
 
-    from datetime import date
-    import sys
-    print(f"DATA1 NIT: {data1}")
-    hoy         = date.today()
+    print(f"VIGENCIAS ADEUDADAS: {[v.get('vigencia') for v in vigencias_adeudadas]}")
+
+    # ── Paz y salvo ──────────────────────────────────────────────────────────
+    if not vigencias_adeudadas:
+        try:
+            anio_actual = datetime.now().year
+            guardar_cache_impuesto_antioquia(placa, anio_actual, estado, sin_deuda=True)
+        except Exception as e_cache:
+            print(f"Error cache paz y salvo: {e_cache}")
+        return [], 0, avaluo, estado, False
+
+    # ── Cálculo local (solo vigencia actual, antes del 31 jul) ───────────────
+    from datetime import date as date_cls
+    hoy         = date_cls.today()
     anio_actual = hoy.year
     solo_actual = (len(vigencias_adeudadas) == 1 and
                    vigencias_adeudadas[0]["vigencia"] == anio_actual)
-    periodo_calc = date(anio_actual, 1, 1) <= hoy <= date(anio_actual, 7, 31)
-    print(f"DEBUG: solo_actual={solo_actual} periodo_calc={periodo_calc} vigencias={[v.get('vigencia') for v in vigencias_adeudadas]}", flush=True)
+    periodo_calc = hoy <= date_cls(anio_actual, 7, 31)
+
     if solo_actual and periodo_calc:
-        print(f"DEBUG CALCULO LOCAL INICIADO")
         try:
             conn_c = get_db_conn()
             cur_c  = conn_c.cursor()
@@ -631,157 +747,80 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
             if row_c:
                 impuesto_base  = row_c[0] or 0
                 valor_servicio = row_c[1] or 0
-
-                if hoy <= date(anio_actual, 4, 30):
+                if hoy <= date_cls(anio_actual, 4, 30):
                     total_calculado = round(impuesto_base * 0.90) + valor_servicio
                 else:
                     total_calculado = impuesto_base + valor_servicio
-
-                print(f"CALCULO LOCAL: placa={placa} total={total_calculado}", flush=True)
-
-                registros = [{
+                print(f"CALCULO LOCAL: {placa} total={total_calculado}")
+                return [{
                     "vigencia":       str(anio_actual),
                     "estado":         "Pendiente de pago",
                     "total_vigencia": total_calculado,
-                }]
-                return registros, total_calculado, avaluo, estado, False
-
+                }], total_calculado, avaluo, estado, False
         except Exception as e_calc:
-            print(f"Error calculo local: {e_calc}", flush=True)
-            print(f"DEBUG ANTES VIGENCIAS: len={len(vigencias_adeudadas)} solo_actual={solo_actual} periodo_calc={periodo_calc}")
-    if not vigencias_adeudadas:
-        try:
-            anio_actual = datetime.now().year
-            guardar_cache_impuesto_antioquia(placa, anio_actual, estado, sin_deuda=True)
-        except Exception as e_cache:
-            print(f"Error cache paz y salvo: {e_cache}")
-        return [], 0, avaluo, estado, False
+            print(f"Error calculo local: {e_calc}")
 
-    total_vigencias = len(vigencias_adeudadas)
-    LIMITE = 5
-
-    def liquidar_vigencia(anio):
-        """Liquida una vigencia y retorna (total, avaluo)."""
-        token3 = resolver_turnstile_2captcha(ANTIOQUIA_SITE_KEY, ANTIOQUIA_URL)
-        session.headers.update({"captcha": token3})
-
-        r4 = session.post(
-            f"{ANTIOQUIA_API}/UsuariosPortalAntioquia/consultarPropietarioVehiculo",
-            json={"tipoDoc": tipo_documento, "nroDoc": identificacion, "placa": placa, "vigencia": anio},
-            headers={"Cookie": f"token_cuestionario={token_cuestionario}"},
-            timeout=120
-        )
-        r4_data = r4.json() if r4.content else {}
-        propietario = r4_data.get("propietario", {}) if r4_data else {}
-
-        session.post(f"{ANTIOQUIA_API}/TablasTipo/obtenerTablasPropietario", json={},
-                     headers={"Cookie": f"token_cuestionario={token_cuestionario}"}, timeout=120)
-        session.get(f"{ANTIOQUIA_API}/UtilImpuestos/obtenerDescripcionPPST",
-                    headers={"Cookie": f"token_cuestionario={token_cuestionario}"}, timeout=120)
-        session.post(f"{ANTIOQUIA_API}/Pagos/parametrosPago", json={},
-                     headers={"Cookie": f"token_cuestionario={token_cuestionario}"}, timeout=120)
-        session.get(f"{ANTIOQUIA_API}/UtilImpuestos/obtenerVigenciaMinimaAutodeclarar",
-                    headers={"Cookie": f"token_cuestionario={token_cuestionario}"}, timeout=120)
-
-        token4 = resolver_turnstile_2captcha(ANTIOQUIA_SITE_KEY, ANTIOQUIA_URL)
-        session.headers.update({"captcha": token4})
-        session.cookies.clear()
-
-        r5 = session.post(
-            f"{ANTIOQUIA_API}/LiquidacionAntioquia/crearDeclaracionImpuestoAnt",
-            json={
-                "formularioLiquidacion": "",
-                "declarante": {
-                    "idsolicitante":    identificacion,
-                    "idtipodocumento":  tipo_documento,
-                     "desctipodocument": {
-                     "CC":"Cedula de Ciudadania","NIT":"NIT","CE":"Cedula de Extranjeria",
-                     "TI":"Tarjeta de Identidad","RC":"Registro Civil","CD":"Carnet Diplomatico",
-                     "PPT":"Permiso por Proteccion Temporal"
-                    }.get(tipo_documento, "Cedula de Ciudadania"),
-                    "nombres":          propietario.get("nameFirst", ""),
-                    "apellidos":        propietario.get("nameLast", ""),
-                    "celular":          "3000000000",
-                    "telefono":         "3000000000",
-                    "email":            "consulta@consulta.com",
-                    "direccion":        "CRA",
-                    "municipio":        "MEDELLIN",
-                    "departamento":     "ANTIOQUIA",
-                    "nivreclamacion":   0,
-                    "procedimiento":    ""
-                },
-                "iIdliqIm": 0,
-                "informacionComplementaria": {
-                    "idTipoDocumento":               1,
-                    "distribucionDepartamento":      5,
-                    "distribucionMunicipio":         5001000,
-                    "direccionCompleta":             "CRA",
-                    "nombreDistribucionDepartamento": "ANTIOQUIA",
-                    "nombreDistribucionMunicipio":   "MEDELLIN",
-                    "tipoCanalLiquidacion":          2,
-                    "tipoOpcionLiquidacion":         1
-                },
-                "placa":    placa,
-                "vigencia": [{"persl": anio}]
-            },
-            timeout=120
-        )
-        data5 = r5.json()
-
-        # Guardar en cache
-        try:
-            guardar_cache_impuesto_antioquia(placa, anio, data5, sin_deuda=False)
-        except Exception as e_cache:
-            print(f"Error cache impuesto: {e_cache}")
-
-        return data5.get("totalPagar", 0) or data5.get("saldoPagar", 0), data5.get("avaluoComercial", avaluo)
-
- 
-    # Ordenar vigencias de más reciente a más antigua
+    # ── Liquidar vigencias (sesión nueva por cada vigencia) ──────────────────
+    total_vigencias  = len(vigencias_adeudadas)
+    LIMITE           = ANTIOQUIA_LIMITE_VIGENCIAS
     vigencias_ordenadas = sorted(vigencias_adeudadas, key=lambda x: x["vigencia"], reverse=True)
 
-    registros = []
-    total_reciente   = 0
-    avaluo_reciente  = avaluo
+    registros            = []
+    total_reciente       = 0
+    avaluo_reciente      = avaluo
     vigencias_liquidadas = 0
 
     for v in vigencias_ordenadas:
         anio = v.get("vigencia")
-        print(f"PROCESANDO vigencia={anio} liquidadas={vigencias_liquidadas}")
         procesos = [p for p in procesos_fiscales if p.get("vigencia") == anio]
         estado_vigencia = procesos[0].get("descripcionProcesoFiscal") if procesos else "Pendiente de pago"
 
-        # Verificar si ya está en caché
+        # Verificar caché
         total_cache = None
         try:
             conn_c = get_db_conn()
             cur_c  = conn_c.cursor()
-            cur_c.execute(
-                "SELECT total_pagar, avaluo_comercial FROM cache_impuestos_antioquia WHERE placa=%s AND vigencia=%s",
-                (placa, anio)
-            )
+            cur_c.execute("""
+                SELECT total_pagar, avaluo_comercial
+                FROM cache_impuestos_antioquia
+                WHERE placa = %s AND vigencia = %s
+                AND (expira_en IS NULL OR expira_en >= CURRENT_DATE)
+            """, (placa, anio))
             row_c = cur_c.fetchone()
             cur_c.close()
             conn_c.close()
-            if row_c:
+            if row_c and row_c[0]:
                 total_cache     = row_c[0]
                 avaluo_reciente = row_c[1] or avaluo
+                print(f"DESDE CACHE: vigencia={anio} total={total_cache}")
         except Exception:
             pass
 
-        if total_cache is not None:
-            # Viene del caché — sin costo
+        if total_cache:
             total = total_cache
             if vigencias_liquidadas == 0:
                 total_reciente = total
+
         elif vigencias_liquidadas < LIMITE:
-            # Liquidar con Turnstile
-            total, avaluo_reciente = liquidar_vigencia(anio)
-            if vigencias_liquidadas == 0:
-                total_reciente = total
-            vigencias_liquidadas += 1
+            # Nueva sesión completa para esta vigencia
+            try:
+                print(f"LIQUIDANDO vigencia={anio} con sesion nueva...")
+                session_v, token_v, _ = iniciar_sesion_antioquia(
+                    placa, identificacion, tipo_documento,
+                    modelo, municipio_transito, apellidos_propietario
+                )
+                total, av = liquidar_vigencia_sesion(
+                    anio, session_v, token_v,
+                    placa, identificacion, tipo_documento, avaluo
+                )
+                avaluo_reciente = av or avaluo_reciente
+                if vigencias_liquidadas == 0:
+                    total_reciente = total
+                vigencias_liquidadas += 1
+            except Exception as e_liq:
+                print(f"Error liquidando vigencia {anio}: {e_liq}")
+                total = None
         else:
-            # Límite alcanzado y no está en caché
             total = None
 
         registros.append({
@@ -790,11 +829,9 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
             "total_vigencia": total,
         })
 
-    excede = total_vigencias > 5
+    excede = total_vigencias > LIMITE
     return registros, total_reciente, avaluo_reciente, estado, excede
 
-
-# ── Router ──
 
 MUNICIPIOS = {
     "envigado":    consultar_envigado,
