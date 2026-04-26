@@ -605,8 +605,7 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
     )
     data3 = r3.json()
     data3 = r3.json()
-    import sys
-    print("VIGENCIAS ADEUDADAS:", data3.get("listaVigenciasAdeudas", []), flush=True, file=sys.stderr)                        
+    print("VIGENCIAS ADEUDADAS:", data3.get("listaVigenciasAdeudas", []))                        
 
     estado              = data3.get("estadoCuenta", {})
     vigencias_adeudadas = data3.get("listaVigenciasAdeudas", [])
