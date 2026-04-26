@@ -604,7 +604,7 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
     solo_actual = (len(vigencias_adeudadas) == 1 and
                    vigencias_adeudadas[0]["vigencia"] == anio_actual)
     periodo_calc = date(anio_actual, 1, 1) <= hoy <= date(anio_actual, 7, 31)
-
+    print(f"DEBUG: solo_actual={solo_actual} periodo_calc={periodo_calc} vigencias={[v.get('vigencia') for v in vigencias_adeudadas]}", flush=True, file=sys.stderr)
     if solo_actual and periodo_calc:
         try:
             conn_c = get_db_conn()
