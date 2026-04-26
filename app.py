@@ -682,8 +682,12 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
                 "formularioLiquidacion": "",
                 "declarante": {
                     "idsolicitante":    identificacion,
-                    "idtipodocumento":  "CC",
-                    "desctipodocument": "Cédula de Ciudadanía",
+                    "idtipodocumento":  tipo_documento,
+                     "desctipodocument": {
+                     "CC":"Cedula de Ciudadania","NIT":"NIT","CE":"Cedula de Extranjeria",
+                     "TI":"Tarjeta de Identidad","RC":"Registro Civil","CD":"Carnet Diplomatico",
+                     "PPT":"Permiso por Proteccion Temporal"
+                    }.get(tipo_documento, "Cedula de Ciudadania"),
                     "nombres":          propietario.get("nameFirst", ""),
                     "apellidos":        propietario.get("nameLast", ""),
                     "celular":          "3000000000",
