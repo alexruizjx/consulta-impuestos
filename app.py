@@ -435,13 +435,16 @@ def _consultar_costo_vigencia(anio, session, token_cuestionario,
         "6": "Tarjeta de Identidad", "7": "Registro Civil",
         "8": "Carnet Diplomatico", "29": "Permiso por Proteccion Temporal",
     }
+    # tipo_documento llega como int (1,2,5...) pero el portal espera string "CC","NIT"...
+    TIPO_DOC_STR = {1:"CC", 2:"NIT", 5:"CE", 6:"TI", 7:"RC", 8:"CD", 29:"PPT"}
+    tipo_doc_str = TIPO_DOC_STR.get(int(tipo_documento), "CC")
 
     token3 = resolver_turnstile_2captcha(ANTIOQUIA_SITE_KEY, ANTIOQUIA_URL)
     session.headers.update({"captcha": token3})
 
     r4 = session.post(
         f"{ANTIOQUIA_API}/UsuariosPortalAntioquia/consultarPropietarioVehiculo",
-        json={"tipoDoc": str(tipo_documento), "nroDoc": identificacion, "placa": placa, "vigencia": anio},
+        json={"tipoDoc": tipo_doc_str, "nroDoc": identificacion, "placa": placa, "vigencia": anio},
         headers={"Cookie": f"token_cuestionario={token_cuestionario}"},
         timeout=120
     )
@@ -467,7 +470,7 @@ def _consultar_costo_vigencia(anio, session, token_cuestionario,
             "formularioLiquidacion": "",
             "declarante": {
                 "idsolicitante": identificacion,
-                "idtipodocumento": str(tipo_documento),
+                "idtipodocumento": tipo_doc_str,
                 "desctipodocument": TIPO_DOC_DESC.get(str(tipo_documento), "Cedula de Ciudadania"),
                 "nombres": propietario.get("nameFirst", ""),
                 "apellidos": propietario.get("nameLast", ""),
