@@ -516,7 +516,7 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
 
         if liq_count < LIMITE:
             try:
-                # Nueva sesion completa para cada vigencia
+                # Sesion completamente nueva por cada vigencia
                 session_v, token_v, _ = _nueva_sesion_antioquia(
                     placa, identificacion, tipo_documento,
                     modelo, municipio_transito, apellidos_propietario
