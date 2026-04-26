@@ -734,8 +734,7 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
 
         return data5.get("totalPagar", 0), data5.get("avaluoComercial", avaluo)
 
-    LIMITE = 1  # Cambiar este número para liquidar más vigencias
-
+ 
     # Ordenar vigencias de más reciente a más antigua
     vigencias_ordenadas = sorted(vigencias_adeudadas, key=lambda x: x["vigencia"], reverse=True)
 
