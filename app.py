@@ -348,6 +348,10 @@ def guardar_cache_impuesto_antioquia(placa, vigencia, declaracion, sin_deuda=Fal
     declaracion: dict con los campos del JSON de crearDeclaracionImpuestoAnt
     """
     try:
+        # No guardar si total es 0 y no es paz y salvo
+        if not sin_deuda and int(declaracion.get("totalPagar", 0) or 0) == 0:
+            print(f"CACHE OMITIDO: {placa} vigencia {vigencia} - total es 0")
+            return
         conn = get_db_conn()
         cur  = conn.cursor()
 
