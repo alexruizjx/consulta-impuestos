@@ -584,6 +584,7 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
                     timeout=120
                 )
                 data5 = r5.json()
+                print(f"DATA5: totalPagar={data5.get('totalPagar')} saldoPagar={data5.get('saldoPagar')} avaluo={data5.get('avaluoComercial')}")
                 print(f"DECLARACION vigencia={anio} total={data5.get('totalPagar')} saldo={data5.get('saldoPagar')}")
                 try:
                     guardar_cache_impuesto_antioquia(placa, anio, data5, sin_deuda=False)
