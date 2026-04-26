@@ -600,6 +600,7 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
 
     from datetime import date
     import sys
+    print(f"DATA1 NIT: {data1}", flush=True, file=sys.stderr)
     hoy         = date.today()
     anio_actual = hoy.year
     solo_actual = (len(vigencias_adeudadas) == 1 and
