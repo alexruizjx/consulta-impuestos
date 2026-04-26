@@ -506,6 +506,7 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
         rows_c = cur_c.fetchall()
         cur_c.close()
         conn_c.close()
+        print(f"CACHE INICIAL {placa}: {rows_c}")  # <-- agregar aqui
 
         if rows_c:
             # Cache inicial SOLO aplica para paz y salvo total
