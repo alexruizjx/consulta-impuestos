@@ -508,10 +508,33 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
         conn_c.close()
 
         if rows_c:
-            # Construir registros desde caché
+            # Verificar si TODAS las vigencias estan a paz y salvo
+            todas_paz = all(r[3] == 'PAZ_Y_SALVO' for r in rows_c)
+            if todas_paz:
+                avaluo_cache = rows_c[0][2] or 0
+                return [], 0, avaluo_cache, {}, False
+
+            # Construir registros desde cache (solo las que tienen deuda)
             registros_cache = []
             total_cache     = 0
             avaluo_cache    = 0
+
+            for i, row in enumerate(rows_c):
+                anio_c, total_c, avaluo_c, estado_c = row
+                if i == 0:
+                    total_cache  = total_c or 0
+                    avaluo_cache = avaluo_c or 0
+
+                if estado_c != 'PAZ_Y_SALVO':
+                    registros_cache.append({
+                        "vigencia":       str(anio_c),
+                        "estado":         "Pendiente de pago",
+                        "total_vigencia": total_c,
+                    })
+
+            if registros_cache:
+                excede = len(registros_cache) > 1
+                return registros_cache, total_cache, avaluo_cache, {}, excede
 
             print(f"CACHE INICIAL: placa={placa} registros={len(rows_c)} vigencias={[r[0] for r in rows_c]}", flush=True, file=sys.stderr)
 
