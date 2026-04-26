@@ -590,7 +590,7 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
         timeout=120
     )
     data3 = r3.json()
-    data3 = r3.json()
+    print(f"DATA3 IUS96G: vigencias={data3.get('listaVigenciasAdeudas')} estado={data3.get('estadoCuenta')}")
     print("VIGENCIAS ADEUDADAS:", data3.get("listaVigenciasAdeudas", []))                        
 
     estado              = data3.get("estadoCuenta", {})
