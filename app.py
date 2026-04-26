@@ -775,7 +775,7 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
             "total_vigencia": total,
         })
 
-    excede = total_vigencias > LIMITE
+    excede = total_vigencias > 5
     return registros, total_reciente, avaluo_reciente, estado, excede
 
 
