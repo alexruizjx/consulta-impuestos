@@ -508,62 +508,17 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
         conn_c.close()
 
         if rows_c:
-            # Cache inicial SOLO aplica para paz y salvo
+            # Cache inicial SOLO aplica para paz y salvo total
             todas_paz = all(r[3] == 'PAZ_Y_SALVO' for r in rows_c)
             if todas_paz:
                 avaluo_cache = rows_c[0][2] or 0
                 return [], 0, avaluo_cache, {}, False
-            # Si tiene deuda, continuar con consulta normal
-            # para verificar qué vigencias siguen adeudadas
-
-            # Construir registros desde cache (solo las que tienen deuda)
-            registros_cache = []
-            total_cache     = 0
-            avaluo_cache    = 0
-
-            for i, row in enumerate(rows_c):
-                anio_c, total_c, avaluo_c, estado_c = row
-                if i == 0:
-                    total_cache  = total_c or 0
-                    avaluo_cache = avaluo_c or 0
-
-                if estado_c != 'PAZ_Y_SALVO':
-                    registros_cache.append({
-                        "vigencia":       str(anio_c),
-                        "estado":         "Pendiente de pago",
-                        "total_vigencia": total_c,
-                    })
-
-            if registros_cache:
-                excede = len(registros_cache) > 1
-                return registros_cache, total_cache, avaluo_cache, {}, excede
-
-            print(f"CACHE INICIAL: placa={placa} registros={len(rows_c)} vigencias={[r[0] for r in rows_c]}", flush=True, file=sys.stderr)
-
-            for i, row in enumerate(rows_c):
-                anio_c, total_c, avaluo_c, estado_c = row
-                if i == 0:
-                    total_cache  = total_c or 0
-                    avaluo_cache = avaluo_c or 0
-
-                # Si estado es PAZ_Y_SALVO devolver sin deuda
-                if estado_c == 'PAZ_Y_SALVO':
-                    return [], 0, avaluo_cache, {}, False
-
-                registros_cache.append({
-                    "vigencia":       str(anio_c),
-                    "estado":         "Pendiente de pago",
-                    "total_vigencia": total_c,
-                })
-
-            excede = len(rows_c) > 1
-            return registros_cache, total_cache, avaluo_cache, {}, excede
+            # Si tiene deuda, NO devolver desde cache
+            # Continuar con consulta completa a Antioquia
 
     except Exception as e_cache_init:
-        print(f"Error consultando cache inicial: {e_cache_init}")
-        # Si falla el cache, continuar con consulta normal
+        print(f"Error consultando cache inicial: {e_cache_init}", flush=True, file=sys.stderr)
 
-    # Paso 1 — Resolver Turnstile
     # Paso 1 — Resolver Turnstile
     token = resolver_turnstile_2captcha(ANTIOQUIA_SITE_KEY, ANTIOQUIA_URL)
 
