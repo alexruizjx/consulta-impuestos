@@ -661,7 +661,8 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
             headers={"Cookie": f"token_cuestionario={token_cuestionario}"},
             timeout=120
         )
-        propietario = r4.json().get("propietario", {})
+        r4_data = r4.json() if r4.content else {}
+        propietario = r4_data.get("propietario", {}) if r4_data else {}
 
         session.post(f"{ANTIOQUIA_API}/TablasTipo/obtenerTablasPropietario", json={},
                      headers={"Cookie": f"token_cuestionario={token_cuestionario}"}, timeout=120)
