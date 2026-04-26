@@ -453,7 +453,8 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
 
         token4 = resolver_turnstile_2captcha(ANTIOQUIA_SITE_KEY, ANTIOQUIA_URL)
         session.headers.update({"captcha": token4})
-        session.cookies.clear()
+        # No borrar cookies — mantener estado de sesion
+        # session.cookies.clear()
 
         r5 = session.post(
             f"{ANTIOQUIA_API}/LiquidacionAntioquia/crearDeclaracionImpuestoAnt",
