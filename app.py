@@ -611,6 +611,50 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
     vigencias_adeudadas = data3.get("listaVigenciasAdeudas", [])
     procesos_fiscales   = data3.get("listaProcesoFiscal", [])
     avaluo              = estado.get("avaluoComercial", 0) or 0
+from datetime import date
+
+hoy          = date.today()
+anio_actual  = hoy.year
+solo_actual  = (len(vigencias_adeudadas) == 1 and 
+                vigencias_adeudadas[0]["vigencia"] == anio_actual)
+periodo_calc = date(anio_actual, 1, 1) <= hoy <= date(anio_actual, 7, 31)
+
+# Si solo debe la vigencia actual y estamos antes del 1 de agosto
+if solo_actual and periodo_calc:
+    # Buscar dato en cache
+    try:
+        conn_c = get_db_conn()
+        cur_c  = conn_c.cursor()
+        cur_c.execute("""
+            SELECT impuesto_con_desc, otros_pagos
+            FROM cache_impuestos_antioquia
+            WHERE placa = %s AND vigencia = %s
+        """, (placa, anio_actual))
+        row_c = cur_c.fetchone()
+        cur_c.close()
+        conn_c.close()
+
+        if row_c:
+            impuesto_base = row_c[0] or 0
+            valor_servicio = row_c[1] or 0
+
+            if hoy <= date(anio_actual, 4, 30):
+                # 1 ene - 30 abr: descuento del 10%
+                total_calculado = round(impuesto_base * 0.90) + valor_servicio
+            else:
+                # 1 may - 31 jul: sin descuento
+                total_calculado = impuesto_base + valor_servicio
+
+            registros = [{
+                "vigencia":       str(anio_actual),
+                "estado":         "Pendiente de pago",
+                "total_vigencia": total_calculado,
+            }]
+            return registros, total_calculado, avaluo, estado, False
+
+    except Exception as e_calc:
+        print(f"Error calculo local: {e_calc}", flush=True, file=sys.stderr)
+        # Si falla el calculo local, continuar con consulta completa                        
 
     if not vigencias_adeudadas:
         try:
