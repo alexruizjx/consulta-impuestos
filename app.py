@@ -798,6 +798,7 @@ MUNICIPIOS = {
 
 @app.route("/consultar", methods=["GET"])
 def consultar():
+    import traceback
     placa     = request.args.get("placa", "").upper().strip()
     municipio = request.args.get("municipio", "").lower().strip()
 
@@ -874,6 +875,8 @@ def consultar():
 
         except Exception as e:
             error_container['error'] = str(e)
+            print(traceback.format_exc(), flush=True, file=sys.stderr)
+            return jsonify({"error": str(e)}), 500
 
     hilo = threading.Thread(target=ejecutar)
     hilo.start()
