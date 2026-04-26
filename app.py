@@ -349,8 +349,10 @@ def guardar_cache_impuesto_antioquia(placa, vigencia, declaracion, sin_deuda=Fal
     """
     try:
         # No guardar si total es 0 y no es paz y salvo
-        if not sin_deuda and int(declaracion.get("totalPagar", 0) or 0) == 0:
-            print(f"CACHE OMITIDO: {placa} vigencia {vigencia} - total es 0")
+        total_pagar = int(declaracion.get("totalPagar", 0) or 0)
+        saldo_pagar = int(declaracion.get("saldoPagar", 0) or 0)
+        if not sin_deuda and total_pagar == 0 and saldo_pagar == 0:
+            print(f"CACHE OMITIDO: {placa} vigencia {vigencia} - total y saldo son 0")
             return
         conn = get_db_conn()
         cur  = conn.cursor()
@@ -732,7 +734,7 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
         except Exception as e_cache:
             print(f"Error cache impuesto: {e_cache}")
 
-        return data5.get("totalPagar", 0), data5.get("avaluoComercial", avaluo)
+        return data5.get("totalPagar", 0) or data5.get("saldoPagar", 0), data5.get("avaluoComercial", avaluo)
 
  
     # Ordenar vigencias de más reciente a más antigua
