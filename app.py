@@ -26,7 +26,7 @@ ANTIOQUIA_SITE_KEY = "0x4AAAAAACJy_BR2tRNN1cnv"
 ANTIOQUIA_URL      = "https://www.vehiculosantioquia.com.co/impuestosweb/#/public"
 ANTIOQUIA_API      = "https://www.vehiculosantioquia.com.co/raiz-backimpuestosweb/backimpuestosweb"
 
-ANTIOQUIA_LIMITE_VIGENCIAS = 5
+ANTIOQUIA_LIMITE_VIGENCIAS = 1
 
 
 def get_db_conn():
