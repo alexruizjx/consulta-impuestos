@@ -403,24 +403,6 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
         "8": "Carnet Diplomatico",  "29": "Permiso por Proteccion Temporal",
     }
 
-    # Cache inicial — solo paz y salvo
-    try:
-        conn_c = get_db_conn()
-        cur_c  = conn_c.cursor()
-        cur_c.execute("""
-            SELECT vigencia, total_pagar, avaluo_comercial, estado
-            FROM cache_impuestos_antioquia
-            WHERE placa = %s AND (expira_en IS NULL OR expira_en >= CURRENT_DATE)
-            ORDER BY vigencia DESC
-        """, (placa,))
-        rows_c = cur_c.fetchall()
-        cur_c.close()
-        conn_c.close()
-        if rows_c and all(r[3] == 'PAZ_Y_SALVO' for r in rows_c):
-            return [], 0, rows_c[0][2] or 0, {}, False
-    except Exception as e:
-        print(f"Error cache inicial: {e}")
-
     # Paso 1 — Primer Turnstile
     token = resolver_turnstile_2captcha(ANTIOQUIA_SITE_KEY, ANTIOQUIA_URL)
     session = requests.Session()
