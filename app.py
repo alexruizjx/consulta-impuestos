@@ -338,6 +338,141 @@ def consultar_laestrella(page, placa):
             return _parsear_emtrasur(data.get("Data", []))
     raise Exception(f"EMTRASUR respondió {resp.status_code}: {resp.text[:200]}")
 
+# ── AGREGAR ESTA FUNCIÓN EN app.py ───────────────────────────────────────────
+# Llamar a guardar_cache_impuesto_antioquia() después de procesar cada vigencia
+# en el endpoint /consultar cuando municipio=antioquia
+
+def guardar_cache_impuesto_antioquia(placa, vigencia, declaracion, sin_deuda=False):
+    """
+    Guarda o actualiza los datos de impuesto de Antioquia en caché.
+    declaracion: dict con los campos del JSON de crearDeclaracionImpuestoAnt
+    """
+    try:
+        conn = get_db_conn()
+        cur  = conn.cursor()
+
+        avaluo      = int(declaracion.get("avaluoComercial", 0) or 0)
+        retefuente  = round(avaluo / 100) if avaluo else 0
+        estado      = "PAZ_Y_SALVO" if sin_deuda else "PENDIENTE"
+
+        cur.execute("""
+            INSERT INTO cache_impuestos_antioquia (
+                placa, vigencia, formulario_liquidacion,
+                avaluo_comercial, impuesto, impuesto_con_desc,
+                sancion, sancion_con_desc, descuento_sancion, otras_sanciones,
+                intereses_mora, intereses_con_desc, descuento_intereses,
+                descuento_pronto_pago, pagos_anteriores, otros_pagos,
+                total_cargo, saldo_pagar, total_pagar, saldo_favor,
+                retefuente, aplica_beneficio, estado, actualizado_en
+            ) VALUES (
+                %s, %s, %s,
+                %s, %s, %s,
+                %s, %s, %s, %s,
+                %s, %s, %s,
+                %s, %s, %s,
+                %s, %s, %s, %s,
+                %s, %s, %s, NOW()
+            )
+            ON CONFLICT (placa, vigencia) DO UPDATE SET
+                formulario_liquidacion = EXCLUDED.formulario_liquidacion,
+                avaluo_comercial       = EXCLUDED.avaluo_comercial,
+                impuesto               = EXCLUDED.impuesto,
+                impuesto_con_desc      = EXCLUDED.impuesto_con_desc,
+                sancion                = EXCLUDED.sancion,
+                sancion_con_desc       = EXCLUDED.sancion_con_desc,
+                descuento_sancion      = EXCLUDED.descuento_sancion,
+                otras_sanciones        = EXCLUDED.otras_sanciones,
+                intereses_mora         = EXCLUDED.intereses_mora,
+                intereses_con_desc     = EXCLUDED.intereses_con_desc,
+                descuento_intereses    = EXCLUDED.descuento_intereses,
+                descuento_pronto_pago  = EXCLUDED.descuento_pronto_pago,
+                pagos_anteriores       = EXCLUDED.pagos_anteriores,
+                otros_pagos            = EXCLUDED.otros_pagos,
+                total_cargo            = EXCLUDED.total_cargo,
+                saldo_pagar            = EXCLUDED.saldo_pagar,
+                total_pagar            = EXCLUDED.total_pagar,
+                saldo_favor            = EXCLUDED.saldo_favor,
+                retefuente             = EXCLUDED.retefuente,
+                aplica_beneficio       = EXCLUDED.aplica_beneficio,
+                estado                 = EXCLUDED.estado,
+                actualizado_en         = NOW()
+        """, (
+            placa.upper(), vigencia,
+            str(declaracion.get("formularioLiquidacion", "") or ""),
+            avaluo,
+            int(declaracion.get("impuesto",         0) or 0),
+            int(declaracion.get("impuestoConDesc",   0) or 0),
+            int(declaracion.get("sancion",           0) or 0),
+            int(declaracion.get("sancionConDesc",    0) or 0),
+            int(declaracion.get("descuentoSancion",  0) or 0),
+            int(declaracion.get("otrasSanciones",    0) or 0),
+            int(declaracion.get("interesesMora",     0) or 0),
+            int(declaracion.get("interesesConDesc",  0) or 0),
+            int(declaracion.get("descuentoInteresesMora", 0) or 0),
+            int(declaracion.get("descuentoProntoPago", 0) or 0),
+            int(declaracion.get("pagosAnteriores",   0) or 0),
+            int(declaracion.get("otrosPagos",        0) or 0),
+            int(declaracion.get("totalCargo",        0) or 0),
+            int(declaracion.get("saldoPagar",        0) or 0),
+            int(declaracion.get("totalPagar",        0) or 0),
+            int(declaracion.get("saldoFavor",        0) or 0),
+            retefuente,
+            str(declaracion.get("aplicaBeneficioTributario", "") or ""),
+            estado
+        ))
+
+        conn.commit()
+        cur.close()
+        conn.close()
+        print(f"Cache impuesto Antioquia guardado: {placa} vigencia {vigencia} estado {estado}")
+
+    except Exception as e:
+        print(f"Error guardando cache impuesto Antioquia: {e}")
+
+
+# ── ENDPOINT PARA CONSULTAR EL CACHE ─────────────────────────────────────────
+
+@app.route("/impuesto-antioquia/cache", methods=["GET"])
+def impuesto_antioquia_cache():
+    """Consulta el cache de impuestos de Antioquia para una placa."""
+    placa = request.args.get("placa", "").upper().strip()
+    if not placa:
+        return jsonify({"error": "Falta la placa"}), 400
+    try:
+        conn = get_db_conn()
+        cur  = conn.cursor()
+        cur.execute("""
+            SELECT vigencia, impuesto_con_desc, sancion_con_desc, intereses_con_desc,
+                   otros_pagos, total_pagar, avaluo_comercial, retefuente,
+                   estado, aplica_beneficio, actualizado_en
+            FROM cache_impuestos_antioquia
+            WHERE placa = %s
+            ORDER BY vigencia DESC
+        """, (placa,))
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        if not rows:
+            return jsonify({"encontrado": False})
+        return jsonify({
+            "encontrado": True,
+            "placa":      placa,
+            "registros":  [{
+                "vigencia":          r[0],
+                "impuesto":          r[1],
+                "sanciones":         r[2],
+                "intereses":         r[3],
+                "otros_pagos":       r[4],
+                "total_pagar":       r[5],
+                "avaluo_comercial":  r[6],
+                "retefuente":        r[7],
+                "estado":            r[8],
+                "aplica_beneficio":  r[9],
+                "actualizado_en":    str(r[10])
+            } for r in rows]
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 def consultar_antioquia(page, placa, identificacion, tipo_documento,
                         modelo, municipio_transito, apellidos_propietario):
