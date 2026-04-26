@@ -360,41 +360,30 @@ def guardar_cache_impuesto_antioquia(placa, vigencia, declaracion, sin_deuda=Fal
         print(f"Error guardando cache: {e}")
 
 
-def consultar_antioquia(page, placa, identificacion, tipo_documento,
-                        modelo, municipio_transito, apellidos_propietario):
+def _sesion_completa_antioquia(placa, identificacion, tipo_documento,
+                               modelo, municipio_transito, apellidos_propietario):
     """
-    Consulta impuestos Antioquia usando el endpoint del viejo que funciona.
-    Retorna (registros, total, avaluo, estado, excede).
+    Proceso completo pasos 1-5: abre sesion, valida cuestionario y obtiene vigencias.
+    Retorna (session, token_cuestionario, data3).
+    Costo: 2 Turnstiles.
     """
-    # Paso 1 — Primer Turnstile
     token = resolver_turnstile_2captcha(ANTIOQUIA_SITE_KEY, ANTIOQUIA_URL)
-
     session = requests.Session()
     session.headers.update({
-        "Accept":           "*/*",
-        "Content-Type":     "application/json",
-        "captcha":          token,
-        "Referer":          "https://www.vehiculosantioquia.com.co/impuestosweb/",
+        "Accept": "*/*", "Content-Type": "application/json", "captcha": token,
+        "Referer": "https://www.vehiculosantioquia.com.co/impuestosweb/",
         "X-Requested-With": "XMLHttpRequest",
-        "User-Agent":       "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Mobile Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Mobile Safari/537.36",
     })
 
-    # Paso 2 — Cuestionario
     r1 = session.post(
         f"{ANTIOQUIA_API}/ConsultarEstadoCuentaImpAntioquia/obtenerCuestionarioEstadoCuenta",
         json={"placa": placa, "idTipoIdentificacion": tipo_documento, "identificacion": identificacion},
         timeout=120
     )
-    if r1.status_code != 200:
-        raise Exception(f"Error cuestionario: {r1.status_code}")
-
     data1 = r1.json()
-    if data1.get("estadoService", {}).get("codigoEstado") != 1:
-        raise Exception("Vehiculo no encontrado o error en consulta.")
+    referencia = data1.get("referencia")
 
-    id_estado_cuenta = data1.get("referencia")
-
-    # Buscar nombre en opciones usando apellidos
     opciones_nombre = data1.get("preguntaNombrePropietario", {}).get("opcionesPregunta", [])
     nombre_encontrado = next(
         (n for n in opciones_nombre if apellidos_propietario.upper() in n.upper()), None
@@ -402,80 +391,186 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
     if not nombre_encontrado:
         raise Exception(f"No se encontro propietario con apellidos '{apellidos_propietario}'.")
 
-    # Paso 3 — Validar cuestionario
     r2 = session.post(
         f"{ANTIOQUIA_API}/ConsultarEstadoCuentaImpAntioquia/validarCuestionarioEstadoCuenta",
         json={
             "placa": placa, "tipoDocumento": tipo_documento, "numeroDocumento": identificacion,
-            "idEstadoCuenta": id_estado_cuenta,
+            "idEstadoCuenta": referencia,
             "respuestas": {
-                "respuestaModelo":            modelo,
+                "respuestaModelo": modelo,
                 "respuestaOrganismoTransito": municipio_transito,
                 "respuestaNombrePropietario": nombre_encontrado,
             }
+        }, timeout=120
+    )
+    if r2.json().get("codigo") != 1:
+        raise Exception("Cuestionario incorrecto. Verifica modelo, municipio y apellidos.")
+
+    token2 = resolver_turnstile_2captcha(ANTIOQUIA_SITE_KEY, ANTIOQUIA_URL)
+    session.headers.update({"captcha": token2})
+    token_cuestionario = session.cookies.get("token_cuestionario")
+    if not token_cuestionario:
+        raise Exception("No se obtuvo token_cuestionario.")
+
+    r3 = session.post(
+        f"{ANTIOQUIA_API}/ConsultarEstadoCuentaImpAntioquia/consultarEstadoCuentaVehiculoHomePublico",
+        json={"placa": placa, "informacionDeclarante": {
+            "idsolicitante": identificacion, "idTipoIdentificacion": tipo_documento
+        }},
+        headers={"Cookie": f"token_cuestionario={token_cuestionario}"},
+        timeout=120
+    )
+    return session, token_cuestionario, r3.json()
+
+
+def _consultar_costo_vigencia(anio, session, token_cuestionario,
+                               placa, identificacion, tipo_documento, avaluo_base):
+    """
+    Pasos 6-10: consulta propietario, pasos intermedios, crea declaracion.
+    Retorna (total_pagar, avaluo_comercial).
+    Costo: 2 Turnstiles adicionales.
+    """
+    TIPO_DOC_DESC = {
+        "1": "Cedula de Ciudadania", "2": "NIT", "5": "Cedula de Extranjeria",
+        "6": "Tarjeta de Identidad", "7": "Registro Civil",
+        "8": "Carnet Diplomatico", "29": "Permiso por Proteccion Temporal",
+    }
+
+    token3 = resolver_turnstile_2captcha(ANTIOQUIA_SITE_KEY, ANTIOQUIA_URL)
+    session.headers.update({"captcha": token3})
+
+    r4 = session.post(
+        f"{ANTIOQUIA_API}/UsuariosPortalAntioquia/consultarPropietarioVehiculo",
+        json={"tipoDoc": str(tipo_documento), "nroDoc": identificacion, "placa": placa, "vigencia": anio},
+        headers={"Cookie": f"token_cuestionario={token_cuestionario}"},
+        timeout=120
+    )
+    r4_data = r4.json() if r4.content else {}
+    propietario = r4_data.get("propietario", {}) if r4_data else {}
+
+    session.post(f"{ANTIOQUIA_API}/TablasTipo/obtenerTablasPropietario", json={},
+                 headers={"Cookie": f"token_cuestionario={token_cuestionario}"}, timeout=120)
+    session.get(f"{ANTIOQUIA_API}/UtilImpuestos/obtenerDescripcionPPST",
+                headers={"Cookie": f"token_cuestionario={token_cuestionario}"}, timeout=120)
+    session.post(f"{ANTIOQUIA_API}/Pagos/parametrosPago", json={},
+                 headers={"Cookie": f"token_cuestionario={token_cuestionario}"}, timeout=120)
+    session.get(f"{ANTIOQUIA_API}/UtilImpuestos/obtenerVigenciaMinimaAutodeclarar",
+                headers={"Cookie": f"token_cuestionario={token_cuestionario}"}, timeout=120)
+
+    token4 = resolver_turnstile_2captcha(ANTIOQUIA_SITE_KEY, ANTIOQUIA_URL)
+    session.headers.update({"captcha": token4})
+    session.cookies.clear()
+
+    r5 = session.post(
+        f"{ANTIOQUIA_API}/LiquidacionAntioquia/crearDeclaracionImpuestoAnt",
+        json={
+            "formularioLiquidacion": "",
+            "declarante": {
+                "idsolicitante": identificacion,
+                "idtipodocumento": str(tipo_documento),
+                "desctipodocument": TIPO_DOC_DESC.get(str(tipo_documento), "Cedula de Ciudadania"),
+                "nombres": propietario.get("nameFirst", ""),
+                "apellidos": propietario.get("nameLast", ""),
+                "celular": "3000000000", "telefono": "3000000000",
+                "email": "consulta@consulta.com", "direccion": "CRA",
+                "municipio": "MEDELLIN", "departamento": "ANTIOQUIA",
+                "nivreclamacion": 0, "procedimiento": ""
+            },
+            "iIdliqIm": 0,
+            "informacionComplementaria": {
+                "idTipoDocumento": 1, "distribucionDepartamento": 5,
+                "distribucionMunicipio": 5001000, "direccionCompleta": "CRA",
+                "nombreDistribucionDepartamento": "ANTIOQUIA",
+                "nombreDistribucionMunicipio": "MEDELLIN",
+                "tipoCanalLiquidacion": 2, "tipoOpcionLiquidacion": 1
+            },
+            "placa": placa,
+            "vigencia": [{"persl": anio}]
         },
         timeout=120
     )
-    if r2.status_code != 200:
-        raise Exception(f"Error validando cuestionario: {r2.status_code}")
+    data5 = r5.json()
 
-    data2 = r2.json()
-    if data2.get("codigo") != 1:
-        raise Exception("Cuestionario incorrecto. Verifica modelo, municipio y apellidos.")
+    try:
+        guardar_cache_impuesto_antioquia(placa, anio, data5, sin_deuda=False)
+    except Exception as e:
+        print(f"Error cache: {e}")
 
-    # Paso 4 — Segundo Turnstile
-    token2 = resolver_turnstile_2captcha(ANTIOQUIA_SITE_KEY, ANTIOQUIA_URL)
-    session.headers.update({"captcha": token2})
+    total = data5.get("totalPagar") or data5.get("saldoPagar") or 0
+    av    = data5.get("avaluoComercial") or avaluo_base
+    return total, av
 
-    # Paso 5 — Estado de cuenta (GET sin body, igual que el viejo)
-    r3 = session.get(
-        f"{ANTIOQUIA_API}/ConsultarEstadoCuentaImpAntioquia/consultarEstadoCuentaVehiculoHomePublico",
-        timeout=120
+
+def consultar_antioquia(page, placa, identificacion, tipo_documento,
+                        modelo, municipio_transito, apellidos_propietario):
+    """
+    Proceso completo para Antioquia.
+    - Sesion inicial para ver cuantas vigencias adeuda.
+    - Proceso COMPLETO Y NUEVO por cada vigencia para obtener el costo.
+    """
+    LIMITE = ANTIOQUIA_LIMITE_VIGENCIAS
+
+    # Sesion inicial — ver vigencias adeudadas
+    session0, token0, data3 = _sesion_completa_antioquia(
+        placa, identificacion, tipo_documento,
+        modelo, municipio_transito, apellidos_propietario
     )
-    if r3.status_code != 200:
-        raise Exception(f"Error consultando estado de cuenta: {r3.status_code}")
 
-    data3 = r3.json()
-    estado_cuenta   = data3.get("estadoCuenta", {})
-    lista_pagos     = estado_cuenta.get("listaDetallePagos", [])
-    lista_vigencias = estado_cuenta.get("listVigenciasAdeudadas", [])
-
-    # Avaluo del pago mas reciente
-    avaluo = 0
-    if lista_pagos:
-        ultimo = sorted(lista_pagos, key=lambda x: x.get("vigencia", 0), reverse=True)[0]
-        try:
-            avaluo = int(str(ultimo.get("avaluo", 0)).replace(".", "").replace(",", "").replace("$", "").strip())
-        except ValueError:
-            pass
+    estado              = data3.get("estadoCuenta", {})
+    vigencias_adeudadas = data3.get("listaVigenciasAdeudas", [])
+    procesos_fiscales   = data3.get("listaProcesoFiscal", [])
+    avaluo              = estado.get("avaluoComercial", 0) or 0
 
     # Paz y salvo
-    if not lista_vigencias:
+    if not vigencias_adeudadas:
         try:
-            guardar_cache_impuesto_antioquia(placa, datetime.now().year, estado_cuenta, sin_deuda=True)
+            guardar_cache_impuesto_antioquia(placa, datetime.now().year, estado, sin_deuda=True)
         except Exception as e:
             print(f"Error cache paz y salvo: {e}")
-        return [], 0, avaluo, estado_cuenta, False
+        return [], 0, avaluo, estado, False
 
-    # Construir registros con totalVigencia directo del portal
-    registros = []
-    for v in lista_vigencias:
+    total_vigencias     = len(vigencias_adeudadas)
+    vigencias_ordenadas = sorted(vigencias_adeudadas, key=lambda x: x["vigencia"], reverse=True)
+
+    registros       = []
+    total_reciente  = 0
+    avaluo_reciente = avaluo
+    liq_count       = 0
+
+    for v in vigencias_ordenadas:
+        anio = v.get("vigencia")
+        procesos = [p for p in procesos_fiscales if p.get("vigencia") == anio]
+        estado_vigencia = procesos[0].get("descripcionProcesoFiscal") if procesos else "Pendiente de pago"
+
+        if liq_count < LIMITE:
+            try:
+                # Proceso COMPLETO Y NUEVO desde cero para esta vigencia
+                session_v, token_v, _ = _sesion_completa_antioquia(
+                    placa, identificacion, tipo_documento,
+                    modelo, municipio_transito, apellidos_propietario
+                )
+                total, av = _consultar_costo_vigencia(
+                    anio, session_v, token_v,
+                    placa, identificacion, tipo_documento, avaluo
+                )
+                avaluo_reciente = av or avaluo_reciente
+                if liq_count == 0:
+                    total_reciente = total
+                liq_count += 1
+            except Exception as e:
+                print(f"Error vigencia {anio}: {e}")
+                total = None
+        else:
+            total = None
+
         registros.append({
-            "vigencia":       str(v.get("vigencia", "")),
-            "estado":         "Pendiente de pago",
-            "total_vigencia": v.get("totalVigencia", 0),
+            "vigencia":       str(anio),
+            "estado":         estado_vigencia,
+            "total_vigencia": total,
         })
 
-    total = sum(r["total_vigencia"] for r in registros)
-
-    # Guardar en cache
-    try:
-        for r in registros:
-            guardar_cache_impuesto_antioquia(placa, int(r["vigencia"]), {"totalPagar": r["total_vigencia"], "avaluoComercial": avaluo}, sin_deuda=False)
-    except Exception as e:
-        print(f"Error cache vigencias: {e}")
-
-    return registros, total, avaluo, estado_cuenta, False
+    excede = total_vigencias > LIMITE
+    return registros, total_reciente, avaluo_reciente, estado, excede
 
 
 MUNICIPIOS = {
