@@ -513,6 +513,8 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
             total_cache     = 0
             avaluo_cache    = 0
 
+            print(f"CACHE INICIAL: placa={placa} registros={len(rows_c)} vigencias={[r[0] for r in rows_c]}", flush=True, file=sys.stderr)
+
             for i, row in enumerate(rows_c):
                 anio_c, total_c, avaluo_c, estado_c = row
                 if i == 0:
