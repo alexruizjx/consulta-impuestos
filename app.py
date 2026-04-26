@@ -517,7 +517,7 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
             # Continuar con consulta completa a Antioquia
 
     except Exception as e_cache_init:
-        print(f"Error consultando cache inicial: {e_cache_init}", flush=True, file=sys.stderr)
+        print(f"Error consultando cache inicial: {e_cache_init}", flush=True)
 
     # Paso 1 — Resolver Turnstile
     token = resolver_turnstile_2captcha(ANTIOQUIA_SITE_KEY, ANTIOQUIA_URL)
@@ -543,7 +543,7 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
         timeout=120
     )
     data1 = r1.json()
-    print(f"DATA1 NIT: {data1}", flush=True, file=sys.stderr)
+    print(f"DATA1 NIT: {data1}", flush=True)
     referencia = data1.get("referencia")
 
     opciones_nombre = data1.get("preguntaNombrePropietario", {}).get("opcionesPregunta", [])
@@ -606,7 +606,7 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
     solo_actual = (len(vigencias_adeudadas) == 1 and
                    vigencias_adeudadas[0]["vigencia"] == anio_actual)
     periodo_calc = date(anio_actual, 1, 1) <= hoy <= date(anio_actual, 7, 31)
-    print(f"DEBUG: solo_actual={solo_actual} periodo_calc={periodo_calc} vigencias={[v.get('vigencia') for v in vigencias_adeudadas]}", flush=True, file=sys.stderr)
+    print(f"DEBUG: solo_actual={solo_actual} periodo_calc={periodo_calc} vigencias={[v.get('vigencia') for v in vigencias_adeudadas]}", flush=True)
     if solo_actual and periodo_calc:
         try:
             conn_c = get_db_conn()
@@ -629,7 +629,7 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
                 else:
                     total_calculado = impuesto_base + valor_servicio
 
-                print(f"CALCULO LOCAL: placa={placa} total={total_calculado}", flush=True, file=sys.stderr)
+                print(f"CALCULO LOCAL: placa={placa} total={total_calculado}", flush=True)
 
                 registros = [{
                     "vigencia":       str(anio_actual),
@@ -639,7 +639,7 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
                 return registros, total_calculado, avaluo, estado, False
 
         except Exception as e_calc:
-            print(f"Error calculo local: {e_calc}", flush=True, file=sys.stderr)
+            print(f"Error calculo local: {e_calc}", flush=True)
 
     if not vigencias_adeudadas:
         try:
@@ -877,7 +877,7 @@ def consultar():
 
         except Exception as e:
             error_container['error'] = str(e)
-            print(traceback.format_exc(), flush=True, file=sys.stderr)
+            print(traceback.format_exc(), flush=True)
             return jsonify({"error": str(e)}), 500
 
     hilo = threading.Thread(target=ejecutar)
