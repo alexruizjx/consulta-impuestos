@@ -635,30 +635,59 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
 
         return data5.get("totalPagar", 0), data5.get("avaluoComercial", avaluo)
 
-    # Vigencia más reciente
-    anio_reciente = sorted(vigencias_adeudadas, key=lambda x: x["vigencia"], reverse=True)[0].get("vigencia")
+    LIMITE = 1  # Cambiar este número para liquidar más vigencias
 
-    # Liquidar siempre la vigencia más reciente
-    total_reciente, avaluo_reciente = liquidar_vigencia(anio_reciente)
+    # Ordenar vigencias de más reciente a más antigua
+    vigencias_ordenadas = sorted(vigencias_adeudadas, key=lambda x: x["vigencia"], reverse=True)
 
-    # Construir registros
     registros = []
-    for v in sorted(vigencias_adeudadas, key=lambda x: x["vigencia"], reverse=True):
-        vigencia = v.get("vigencia")
-        procesos = [p for p in procesos_fiscales if p.get("vigencia") == vigencia]
+    total_reciente   = 0
+    avaluo_reciente  = avaluo
+    vigencias_liquidadas = 0
+
+    for v in vigencias_ordenadas:
+        anio = v.get("vigencia")
+        procesos = [p for p in procesos_fiscales if p.get("vigencia") == anio]
         estado_vigencia = procesos[0].get("descripcionProcesoFiscal") if procesos else "Pendiente de pago"
-        if vigencia == anio_reciente:
-            registros.append({
-                "vigencia":       str(vigencia),
-                "estado":         estado_vigencia,
-                "total_vigencia": total_reciente,
-            })
+
+        # Verificar si ya está en caché
+        total_cache = None
+        try:
+            conn_c = get_db_conn()
+            cur_c  = conn_c.cursor()
+            cur_c.execute(
+                "SELECT total_pagar, avaluo_comercial FROM cache_impuestos_antioquia WHERE placa=%s AND vigencia=%s",
+                (placa, anio)
+            )
+            row_c = cur_c.fetchone()
+            cur_c.close()
+            conn_c.close()
+            if row_c:
+                total_cache     = row_c[0]
+                avaluo_reciente = row_c[1] or avaluo
+        except Exception:
+            pass
+
+        if total_cache is not None:
+            # Viene del caché — sin costo
+            total = total_cache
+            if vigencias_liquidadas == 0:
+                total_reciente = total
+        elif vigencias_liquidadas < LIMITE:
+            # Liquidar con Turnstile
+            total, avaluo_reciente = liquidar_vigencia(anio)
+            if vigencias_liquidadas == 0:
+                total_reciente = total
+            vigencias_liquidadas += 1
         else:
-            registros.append({
-                "vigencia":       str(vigencia),
-                "estado":         estado_vigencia,
-                "total_vigencia": None,
-            })
+            # Límite alcanzado y no está en caché
+            total = None
+
+        registros.append({
+            "vigencia":       str(anio),
+            "estado":         estado_vigencia,
+            "total_vigencia": total,
+        })
 
     excede = total_vigencias > LIMITE
     return registros, total_reciente, avaluo_reciente, estado, excede
