@@ -919,7 +919,7 @@ def consultar():
 
     if excede:
         respuesta["excede_limite"]  = True
-        respuesta["mensaje_limite"] = "El límite de consulta es de una (1) vigencia. Para saber lo adeudado en las demás vigencias comunícate con un asesor de la Gobernación de Antioquia al 6044444666."
+        respuesta["mensaje_limite"] = "El límite de consulta es de una (5) vigencia. Para saber lo adeudado en las demás vigencias comunícate con un asesor de la Gobernación de Antioquia al 6044444666."
 
     return jsonify(respuesta)
 
