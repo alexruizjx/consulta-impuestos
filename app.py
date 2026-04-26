@@ -746,7 +746,7 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
 
     for v in vigencias_ordenadas:
         anio = v.get("vigencia")
-        print(f"PROCESANDO: anio={anio} en_cache={total_cache} liquidadas={vigencias_liquidadas} LIMITE={LIMITE}")
+        print(f"PROCESANDO vigencia={anio} liquidadas={vigencias_liquidadas}")
         procesos = [p for p in procesos_fiscales if p.get("vigencia") == anio]
         estado_vigencia = procesos[0].get("descripcionProcesoFiscal") if procesos else "Pendiente de pago"
 
