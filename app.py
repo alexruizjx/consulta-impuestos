@@ -895,7 +895,7 @@ def consultar():
 
     hilo = threading.Thread(target=ejecutar)
     hilo.start()
-    hilo.join(timeout=180)
+    hilo.join(timeout=290)
 
     if hilo.is_alive():
         return jsonify({"error": "La consulta tardó demasiado. Intenta de nuevo."}), 504
