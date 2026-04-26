@@ -508,11 +508,13 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
         conn_c.close()
 
         if rows_c:
-            # Verificar si TODAS las vigencias estan a paz y salvo
+            # Cache inicial SOLO aplica para paz y salvo
             todas_paz = all(r[3] == 'PAZ_Y_SALVO' for r in rows_c)
             if todas_paz:
                 avaluo_cache = rows_c[0][2] or 0
                 return [], 0, avaluo_cache, {}, False
+            # Si tiene deuda, continuar con consulta normal
+            # para verificar qué vigencias siguen adeudadas
 
             # Construir registros desde cache (solo las que tienen deuda)
             registros_cache = []
