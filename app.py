@@ -557,8 +557,7 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento,
                     placa, identificacion, tipo_documento, avaluo
                 )
                 avaluo_reciente = av or avaluo_reciente
-                if liq_count == 0:
-                    total_reciente = total
+                total_reciente += total
                 liq_count += 1
             except Exception as e:
                 print(f"Error vigencia {anio}: {e}")
