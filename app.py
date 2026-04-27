@@ -462,7 +462,7 @@ def _consultar_costo_vigencia(anio, session, token_cuestionario,
 
     token4 = resolver_turnstile_2captcha(ANTIOQUIA_SITE_KEY, ANTIOQUIA_URL)
     session.headers.update({"captcha": token4})
-    #session.cookies.clear()
+    session.cookies.clear()
 
     r5 = session.post(
         f"{ANTIOQUIA_API}/LiquidacionAntioquia/crearDeclaracionImpuestoAnt",
