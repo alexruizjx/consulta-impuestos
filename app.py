@@ -26,7 +26,7 @@ ANTIOQUIA_SITE_KEY = "0x4AAAAAACJy_BR2tRNN1cnv"
 ANTIOQUIA_URL      = "https://www.vehiculosantioquia.com.co/impuestosweb/#/public"
 ANTIOQUIA_API      = "https://www.vehiculosantioquia.com.co/raiz-backimpuestosweb/backimpuestosweb"
 
-ANTIOQUIA_LIMITE_VIGENCIAS = 1
+ANTIOQUIA_LIMITE_VIGENCIAS = 5
 
 
 def get_db_conn():
@@ -462,7 +462,7 @@ def _consultar_costo_vigencia(anio, session, token_cuestionario,
 
     token4 = resolver_turnstile_2captcha(ANTIOQUIA_SITE_KEY, ANTIOQUIA_URL)
     session.headers.update({"captcha": token4})
-    session.cookies.clear()
+    #session.cookies.clear()
 
     r5 = session.post(
         f"{ANTIOQUIA_API}/LiquidacionAntioquia/crearDeclaracionImpuestoAnt",
