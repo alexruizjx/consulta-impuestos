@@ -748,6 +748,7 @@ def retefuente_buscar():
     clase      = request.args.get("clase", "").strip().upper()
     carroceria = request.args.get("carroceria", "").strip().upper()
     modelo     = request.args.get("modelo", "").strip()
+    cilindraje = request.args.get("cilindraje", "0").strip()
 
     if not marca or not clase or not modelo:
         return jsonify({"error": "Debes enviar marca, clase y modelo."}), 400
