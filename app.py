@@ -770,36 +770,38 @@ def retefuente_buscar():
         cil_min = max(0, cil_vehiculo - 50) if cil_vehiculo > 0 else 0
 
         # Función auxiliar para construir query con filtro cilindraje
-        def query_retefuente(where_extra, params_extra):
-            cil_cond = f"AND cilindraje >= {cil_min}" if cil_min > 0 else ""
+        def query_retefuente(where_extra, params_extra, cil_desde, limite=8):
+            cil_cond = f"AND cilindraje >= {cil_desde}" if cil_desde > 0 else ""
             order = f"CASE WHEN cilindraje >= {cil_vehiculo} THEN cilindraje ELSE cilindraje + 999999 END, linea"
             sql = f"""
                 SELECT id, marca, linea, cilindraje, {col_anio} as avaluo
                 FROM retefuente_2026
                 WHERE tabla = %s AND marca = %s {where_extra} {cil_cond} AND {col_anio} > 0
                 ORDER BY {order}
-                LIMIT 20
+                LIMIT {limite}
             """
             cur.execute(sql, [tabla, marca] + params_extra)
             return cur.fetchall()
 
-        # 1. Coincidencias por palabras de la línea
+        # Buscar solo cilindraje >= vehiculo (exacto o superior)
         rows = []
         palabras = [p for p in linea.split() if len(p) > 2][:3]
+
+        # 1. Con palabras de la línea + cilindraje >= vehiculo
         if palabras and linea:
             like_conds = " AND ".join(["linea ILIKE %s" for _ in palabras])
-            rows = query_retefuente(f"AND {like_conds}", [f'%{p}%' for p in palabras])
+            rows = query_retefuente(f"AND {like_conds}", [f'%{p}%' for p in palabras], cil_vehiculo)
 
-        # 2. Línea base estándar si no hay resultados
+        # 2. Línea base estándar + cilindraje >= vehiculo
         if not rows:
             rows = query_retefuente(
                 "AND (linea ILIKE %s OR linea ILIKE %s)",
-                ['%LINEA BASE%', '%BASE ESTANDAR%']
+                ['%LINEA BASE%', '%BASE ESTANDAR%'], cil_vehiculo
             )
 
-        # 3. Todas las líneas de esa marca si sigue sin resultados
+        # 3. Todas las líneas de esa marca + cilindraje >= vehiculo
         if not rows:
-            rows = query_retefuente("", [])
+            rows = query_retefuente("", [], cil_vehiculo)
 
         cur.close()
         conn.close()
