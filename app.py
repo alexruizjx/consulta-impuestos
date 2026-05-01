@@ -706,6 +706,145 @@ def consultar():
     return jsonify(respuesta)
 
 
+# ============================================================
+#  RETEFUENTE
+# ============================================================
+
+# Mapeo clase OCR → tabla retefuente
+def _tabla_retefuente(clase, carroceria=''):
+    clase      = (clase or '').strip().upper()
+    carroceria = (carroceria or '').strip().upper()
+    if clase in ('AUTOMOVIL', 'AUTOMÓVIL'):             return 'T1'
+    if clase == 'CAMIONETA':
+        return 'T3' if carroceria == 'DOBLE CABINA' else 'T2'
+    if clase in ('CAMPERO',):                            return 'T2'
+    if clase in ('MOTOCICLETA', 'MOTOCARRO'):            return 'T5'
+    if clase in ('BUS', 'BUSETA', 'MICROBUS', 'MICROBÚS'): return 'T6'
+    if clase in ('CAMION', 'CAMIÓN', 'VOLQUETA'):        return 'T7'
+    if clase == 'AMBULANCIA':                            return 'T8'
+    return None
+
+def _col_anio(modelo):
+    """Devuelve el nombre de columna según el modelo del vehículo."""
+    try:
+        anio = int(str(modelo).strip())
+    except:
+        return 'anio_2001_ant'
+    if anio <= 2001:
+        return 'anio_2001_ant'
+    if anio > 2025:
+        return 'anio_2025'
+    return f'anio_{anio}'
+
+
+@app.route("/retefuente/buscar", methods=["GET"])
+def retefuente_buscar():
+    """
+    Busca opciones de retefuente según marca, clase, carroceria y modelo.
+    Devuelve lista de opciones para que el usuario elija.
+    """
+    marca      = request.args.get("marca", "").strip().upper()
+    linea      = request.args.get("linea", "").strip().upper()
+    clase      = request.args.get("clase", "").strip().upper()
+    carroceria = request.args.get("carroceria", "").strip().upper()
+    modelo     = request.args.get("modelo", "").strip()
+
+    if not marca or not clase or not modelo:
+        return jsonify({"error": "Debes enviar marca, clase y modelo."}), 400
+
+    tabla = _tabla_retefuente(clase, carroceria)
+    if not tabla:
+        return jsonify({"error": f"Clase '{clase}' no tiene tabla de retefuente."}), 400
+
+    col_anio = _col_anio(modelo)
+
+    try:
+        conn = get_db_conn()
+        cur  = conn.cursor()
+
+        # 1. Buscar coincidencias exactas de marca + línea contiene palabras clave
+        palabras = [p for p in linea.split() if len(p) > 2]
+        if palabras and linea:
+            like_conditions = " AND ".join([f"linea ILIKE %s" for _ in palabras[:3]])
+            params = [tabla, marca] + [f'%{p}%' for p in palabras[:3]]
+            cur.execute(f"""
+                SELECT id, marca, linea, cilindraje, {col_anio} as avaluo
+                FROM retefuente_2026
+                WHERE tabla = %s AND marca = %s AND {like_conditions}
+                  AND {col_anio} > 0
+                ORDER BY linea
+                LIMIT 20
+            """, params)
+            rows = cur.fetchall()
+        else:
+            rows = []
+
+        # 2. Si no hay resultados buscar línea base estándar de esa marca
+        if not rows:
+            cur.execute(f"""
+                SELECT id, marca, linea, cilindraje, {col_anio} as avaluo
+                FROM retefuente_2026
+                WHERE tabla = %s AND marca = %s
+                  AND (linea ILIKE %s OR linea ILIKE %s)
+                  AND {col_anio} > 0
+                ORDER BY linea
+                LIMIT 5
+            """, (tabla, marca, '%LINEA BASE%', '%BASE ESTANDAR%'))
+            rows = cur.fetchall()
+
+        # 3. Si sigue sin resultados, devolver todas las líneas de esa marca
+        if not rows:
+            cur.execute(f"""
+                SELECT id, marca, linea, cilindraje, {col_anio} as avaluo
+                FROM retefuente_2026
+                WHERE tabla = %s AND marca = %s AND {col_anio} > 0
+                ORDER BY linea
+                LIMIT 30
+            """, (tabla, marca))
+            rows = cur.fetchall()
+
+        cur.close()
+        conn.close()
+
+        opciones = [{
+            "id":         r[0],
+            "marca":      r[1],
+            "linea":      r[2],
+            "cilindraje": r[3],
+            "avaluo":     r[4],
+            "retefuente": round(r[4] / 100) if r[4] else 0
+        } for r in rows]
+
+        return jsonify({
+            "tabla":   tabla,
+            "col_anio": col_anio,
+            "opciones": opciones,
+            "total":   len(opciones)
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/retefuente/marcas", methods=["GET"])
+def retefuente_marcas():
+    """Devuelve lista de marcas disponibles para una tabla."""
+    clase      = request.args.get("clase", "").strip().upper()
+    carroceria = request.args.get("carroceria", "").strip().upper()
+    tabla = _tabla_retefuente(clase, carroceria)
+    if not tabla:
+        return jsonify({"error": "Clase no reconocida"}), 400
+    try:
+        conn = get_db_conn()
+        cur  = conn.cursor()
+        cur.execute("SELECT DISTINCT marca FROM retefuente_2026 WHERE tabla=%s ORDER BY marca", (tabla,))
+        marcas = [r[0] for r in cur.fetchall()]
+        cur.close(); conn.close()
+        return jsonify({"marcas": marcas})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/tramites/filtros", methods=["GET"])
 def tramites_filtros():
     try:
