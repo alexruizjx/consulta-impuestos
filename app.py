@@ -46,7 +46,7 @@ ANTIOQUIA_TIPO_DOC_MAP = {
     "TI": "6", "RC": "7", "CD": "8", "PPT": "29"
 }
 
-ANTIOQUIA_LIMITE_VIGENCIAS = 1
+ANTIOQUIA_LIMITE_VIGENCIAS = 10
 
 
 def get_db_conn():
@@ -777,11 +777,11 @@ def ocr_tarjeta():
         hash_imagen = hashlib.sha256(img_data.encode()).hexdigest()
         conn = get_db_conn()
         cur = conn.cursor()
-        cur.execute("SELECT placa, marca, linea, modelo, clase, servicio, capacidad, cilindrada, tipo_documento, cedula, apellidos, municipio FROM cache_tarjetas WHERE hash_imagen = %s", (hash_imagen,))
+        cur.execute("SELECT placa, marca, linea, modelo, clase, servicio, capacidad, cilindrada, carroceria, tipo_documento, cedula, apellidos, municipio FROM cache_tarjetas WHERE hash_imagen = %s", (hash_imagen,))
         row = cur.fetchone()
         if row:
             cur.close(); conn.close()
-            return jsonify({"placa": row[0] or "", "marca": row[1] or "", "linea": row[2] or "", "modelo": row[3] or "", "clase": row[4] or "", "servicio": row[5] or "", "capacidad": row[6] or "", "cilindrada": row[7] or "", "tipo_documento": row[8] or "", "cedula": row[9] or "", "apellidos": row[10] or "", "municipio": row[11] or "", "desde_cache": True})
+            return jsonify({"placa": row[0] or "", "marca": row[1] or "", "linea": row[2] or "", "modelo": row[3] or "", "clase": row[4] or "", "servicio": row[5] or "", "capacidad": row[6] or "", "cilindrada": row[7] or "", "carroceria": row[8] or "", "tipo_documento": row[9] or "", "cedula": row[10] or "", "apellidos": row[11] or "", "municipio": row[12] or "", "desde_cache": True})
         cur.close(); conn.close()
         anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
         if not anthropic_key:
@@ -791,7 +791,7 @@ def ocr_tarjeta():
             headers={"x-api-key": anthropic_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
             json={"model": "claude-opus-4-5", "max_tokens": 600, "messages": [{"role": "user", "content": [
                 {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": img_data}},
-                {"type": "text", "text": "Eres un experto en leer tarjetas de propiedad de vehiculos colombianos. La imagen puede estar en cualquier orientacion. Analiza TODOS los caracteres con mucho cuidado especialmente los numeros. Extrae: 1. PLACA (exactamente 3 letras + 3 numeros, verifica cada caracter) 2. MARCA del vehiculo 3. LINEA del vehiculo 4. MODELO (anno 4 digitos) 5. CLASE (automovil, motocicleta, campero, camioneta, etc) 6. SERVICIO (particular, publico, oficial) 7. CAPACIDAD (numero de pasajeros o carga) 8. CILINDRADA (numero en cc) 9. TIPO_DOCUMENTO (uno de: C.C, NIT, P.P.T, T.I, R.C - aparece debajo de IDENTIFICACION al lado izquierdo del numero) 10. CEDULA (numero de identificacion, verifica TODOS los digitos uno por uno, no omitas ninguno) 11. APELLIDOS del propietario. Responde SOLO en JSON sin explicaciones: {\"placa\": \"\", \"marca\": \"\", \"linea\": \"\", \"modelo\": \"\", \"clase\": \"\", \"servicio\": \"\", \"capacidad\": \"\", \"cilindrada\": \"\", \"tipo_documento\": \"\", \"cedula\": \"\", \"apellidos\": \"\"}"}
+                {"type": "text", "text": "Eres un experto en leer tarjetas de propiedad de vehiculos colombianos. La imagen puede estar en cualquier orientacion. Analiza TODOS los caracteres con mucho cuidado especialmente los numeros. Extrae: 1. PLACA (exactamente 3 letras + 3 numeros, verifica cada caracter) 2. MARCA del vehiculo 3. LINEA del vehiculo 4. MODELO (anno 4 digitos) 5. CLASE (automovil, motocicleta, campero, camioneta, etc) 6. SERVICIO (particular, publico, oficial) 7. CAPACIDAD (numero de pasajeros o carga) 8. CILINDRADA (numero en cc) 9. TIPO_DOCUMENTO (uno de: C.C, NIT, P.P.T, T.I, R.C - aparece debajo de IDENTIFICACION al lado izquierdo del numero) 10. CEDULA (numero de identificacion, verifica TODOS los digitos uno por uno, no omitas ninguno) 11. APELLIDOS del propietario. Responde SOLO en JSON sin explicaciones: {\"placa\": \"\", \"marca\": \"\", \"linea\": \"\", \"modelo\": \"\", \"clase\": \"\", \"servicio\": \"\", \"capacidad\": \"\", \"cilindrada\": \"\", \"carroceria\": \"\", \"tipo_documento\": \"\", \"cedula\": \"\", \"apellidos\": \"\"}"}
             ]}]},
             timeout=120
         )
@@ -813,6 +813,7 @@ def ocr_tarjeta():
         servicio       = resultado.get("servicio", "").upper().strip()
         capacidad      = resultado.get("capacidad", "").strip()
         cilindrada     = resultado.get("cilindrada", "").strip()
+        carroceria     = resultado.get("carroceria", "").upper().strip()
         tipo_documento = resultado.get("tipo_documento", "").upper().strip()
         cedula         = resultado.get("cedula", "").strip()
         apellidos      = resultado.get("apellidos", "").upper().strip()
@@ -831,7 +832,7 @@ def ocr_tarjeta():
             conn2.close()
         except Exception as e_cache:
             print(f"Error cache tarjeta: {e_cache}")
-        return jsonify({"placa": placa, "marca": marca, "linea": linea, "modelo": modelo, "clase": clase, "servicio": servicio, "capacidad": capacidad, "cilindrada": cilindrada, "tipo_documento": tipo_documento, "cedula": cedula, "apellidos": apellidos, "municipio": "", "desde_cache": False})
+        return jsonify({"placa": placa, "marca": marca, "linea": linea, "modelo": modelo, "clase": clase, "servicio": servicio, "capacidad": capacidad, "cilindrada": cilindrada, "carroceria": carroceria, "tipo_documento": tipo_documento, "cedula": cedula, "apellidos": apellidos, "municipio": "", "desde_cache": False})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
