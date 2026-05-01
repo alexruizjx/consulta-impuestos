@@ -769,64 +769,37 @@ def retefuente_buscar():
             cil_vehiculo = 0
         cil_min = max(0, cil_vehiculo - 50) if cil_vehiculo > 0 else 0
 
-        # 1. Buscar coincidencias de marca + línea contiene palabras clave + cilindraje aproximado
-        palabras = [p for p in linea.split() if len(p) > 2]
-        if palabras and linea:
-            like_conditions = " AND ".join([f"linea ILIKE %s" for _ in palabras[:3]])
-            params = [tabla, marca] + [f'%{p}%' for p in palabras[:3]]
-            if cil_min > 0:
-                params += [cil_min]
-                cil_filter = f"AND cilindraje >= %s"
-            else:
-                cil_filter = ""
-            cur.execute(f"""
+        # Función auxiliar para construir query con filtro cilindraje
+        def query_retefuente(where_extra, params_extra):
+            cil_cond = f"AND cilindraje >= {cil_min}" if cil_min > 0 else ""
+            order = f"CASE WHEN cilindraje >= {cil_vehiculo} THEN cilindraje ELSE cilindraje + 999999 END, linea"
+            sql = f"""
                 SELECT id, marca, linea, cilindraje, {col_anio} as avaluo
                 FROM retefuente_2026
-                WHERE tabla = %s AND marca = %s AND {like_conditions}
-                  {cil_filter} AND {col_anio} > 0
-                ORDER BY CASE WHEN cilindraje >= {cil_vehiculo} THEN cilindraje ELSE cilindraje + 999999 END, linea
+                WHERE tabla = %s AND marca = %s {where_extra} {cil_cond} AND {col_anio} > 0
+                ORDER BY {order}
                 LIMIT 20
-            """, params)
-            rows = cur.fetchall()
-        else:
-            rows = []
+            """
+            cur.execute(sql, [tabla, marca] + params_extra)
+            return cur.fetchall()
 
-        # 2. Si no hay resultados buscar línea base estándar de esa marca + cilindraje
-        if not rows:
-            params2 = [tabla, marca, '%LINEA BASE%', '%BASE ESTANDAR%']
-            if cil_min > 0:
-                params2.append(cil_min)
-                cil_filter2 = f"AND cilindraje >= %s"
-            else:
-                cil_filter2 = ""
-            cur.execute(f"""
-                SELECT id, marca, linea, cilindraje, {col_anio} as avaluo
-                FROM retefuente_2026
-                WHERE tabla = %s AND marca = %s
-                  AND (linea ILIKE %s OR linea ILIKE %s)
-                  {cil_filter2} AND {col_anio} > 0
-                ORDER BY CASE WHEN cilindraje >= {cil_vehiculo} THEN cilindraje ELSE cilindraje + 999999 END, linea
-                LIMIT 5
-            """, params2)
-            rows = cur.fetchall()
+        # 1. Coincidencias por palabras de la línea
+        rows = []
+        palabras = [p for p in linea.split() if len(p) > 2][:3]
+        if palabras and linea:
+            like_conds = " AND ".join(["linea ILIKE %s" for _ in palabras])
+            rows = query_retefuente(f"AND {like_conds}", [f'%{p}%' for p in palabras])
 
-        # 3. Si sigue sin resultados, devolver todas las líneas de esa marca + cilindraje
+        # 2. Línea base estándar si no hay resultados
         if not rows:
-            params3 = [tabla, marca]
-            if cil_min > 0:
-                params3.append(cil_min)
-                cil_filter3 = f"AND cilindraje >= %s"
-            else:
-                cil_filter3 = ""
-            cur.execute(f"""
-                SELECT id, marca, linea, cilindraje, {col_anio} as avaluo
-                FROM retefuente_2026
-                WHERE tabla = %s AND marca = %s
-                  {cil_filter3} AND {col_anio} > 0
-                ORDER BY CASE WHEN cilindraje >= {cil_vehiculo} THEN cilindraje ELSE cilindraje + 999999 END, linea
-                LIMIT 30
-            """, params3)
-            rows = cur.fetchall()
+            rows = query_retefuente(
+                "AND (linea ILIKE %s OR linea ILIKE %s)",
+                ['%LINEA BASE%', '%BASE ESTANDAR%']
+            )
+
+        # 3. Todas las líneas de esa marca si sigue sin resultados
+        if not rows:
+            rows = query_retefuente("", [])
 
         cur.close()
         conn.close()
