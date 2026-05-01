@@ -767,7 +767,7 @@ def retefuente_buscar():
             cil_vehiculo = int(cilindraje) if cilindraje else 0
         except:
             cil_vehiculo = 0
-        cil_min = max(0, cil_vehiculo - 100) if cil_vehiculo > 0 else 0
+        cil_min = max(0, cil_vehiculo - 50) if cil_vehiculo > 0 else 0
 
         # 1. Buscar coincidencias de marca + línea contiene palabras clave + cilindraje aproximado
         palabras = [p for p in linea.split() if len(p) > 2]
@@ -784,7 +784,7 @@ def retefuente_buscar():
                 FROM retefuente_2026
                 WHERE tabla = %s AND marca = %s AND {like_conditions}
                   {cil_filter} AND {col_anio} > 0
-                ORDER BY ABS(cilindraje - {cil_vehiculo if cil_vehiculo else 0}), linea
+                ORDER BY CASE WHEN cilindraje >= {cil_vehiculo} THEN cilindraje ELSE cilindraje + 999999 END, linea
                 LIMIT 20
             """, params)
             rows = cur.fetchall()
@@ -805,7 +805,7 @@ def retefuente_buscar():
                 WHERE tabla = %s AND marca = %s
                   AND (linea ILIKE %s OR linea ILIKE %s)
                   {cil_filter2} AND {col_anio} > 0
-                ORDER BY ABS(cilindraje - {cil_vehiculo if cil_vehiculo else 0}), linea
+                ORDER BY CASE WHEN cilindraje >= {cil_vehiculo} THEN cilindraje ELSE cilindraje + 999999 END, linea
                 LIMIT 5
             """, params2)
             rows = cur.fetchall()
@@ -823,7 +823,7 @@ def retefuente_buscar():
                 FROM retefuente_2026
                 WHERE tabla = %s AND marca = %s
                   {cil_filter3} AND {col_anio} > 0
-                ORDER BY ABS(cilindraje - {cil_vehiculo if cil_vehiculo else 0}), linea
+                ORDER BY CASE WHEN cilindraje >= {cil_vehiculo} THEN cilindraje ELSE cilindraje + 999999 END, linea
                 LIMIT 30
             """, params3)
             rows = cur.fetchall()
