@@ -762,45 +762,70 @@ def retefuente_buscar():
         conn = get_db_conn()
         cur  = conn.cursor()
 
-        # 1. Buscar coincidencias exactas de marca + línea contiene palabras clave
+        # Cilindraje del vehículo para filtrar — mostrar desde (cilindraje - 100) hacia arriba
+        try:
+            cil_vehiculo = int(cilindraje) if cilindraje else 0
+        except:
+            cil_vehiculo = 0
+        cil_min = max(0, cil_vehiculo - 100) if cil_vehiculo > 0 else 0
+
+        # 1. Buscar coincidencias de marca + línea contiene palabras clave + cilindraje aproximado
         palabras = [p for p in linea.split() if len(p) > 2]
         if palabras and linea:
             like_conditions = " AND ".join([f"linea ILIKE %s" for _ in palabras[:3]])
             params = [tabla, marca] + [f'%{p}%' for p in palabras[:3]]
+            if cil_min > 0:
+                params += [cil_min]
+                cil_filter = f"AND cilindraje >= %s"
+            else:
+                cil_filter = ""
             cur.execute(f"""
                 SELECT id, marca, linea, cilindraje, {col_anio} as avaluo
                 FROM retefuente_2026
                 WHERE tabla = %s AND marca = %s AND {like_conditions}
-                  AND {col_anio} > 0
-                ORDER BY linea
+                  {cil_filter} AND {col_anio} > 0
+                ORDER BY ABS(cilindraje - {cil_vehiculo if cil_vehiculo else 0}), linea
                 LIMIT 20
             """, params)
             rows = cur.fetchall()
         else:
             rows = []
 
-        # 2. Si no hay resultados buscar línea base estándar de esa marca
+        # 2. Si no hay resultados buscar línea base estándar de esa marca + cilindraje
         if not rows:
+            params2 = [tabla, marca, '%LINEA BASE%', '%BASE ESTANDAR%']
+            if cil_min > 0:
+                params2.append(cil_min)
+                cil_filter2 = f"AND cilindraje >= %s"
+            else:
+                cil_filter2 = ""
             cur.execute(f"""
                 SELECT id, marca, linea, cilindraje, {col_anio} as avaluo
                 FROM retefuente_2026
                 WHERE tabla = %s AND marca = %s
                   AND (linea ILIKE %s OR linea ILIKE %s)
-                  AND {col_anio} > 0
-                ORDER BY linea
+                  {cil_filter2} AND {col_anio} > 0
+                ORDER BY ABS(cilindraje - {cil_vehiculo if cil_vehiculo else 0}), linea
                 LIMIT 5
-            """, (tabla, marca, '%LINEA BASE%', '%BASE ESTANDAR%'))
+            """, params2)
             rows = cur.fetchall()
 
-        # 3. Si sigue sin resultados, devolver todas las líneas de esa marca
+        # 3. Si sigue sin resultados, devolver todas las líneas de esa marca + cilindraje
         if not rows:
+            params3 = [tabla, marca]
+            if cil_min > 0:
+                params3.append(cil_min)
+                cil_filter3 = f"AND cilindraje >= %s"
+            else:
+                cil_filter3 = ""
             cur.execute(f"""
                 SELECT id, marca, linea, cilindraje, {col_anio} as avaluo
                 FROM retefuente_2026
-                WHERE tabla = %s AND marca = %s AND {col_anio} > 0
-                ORDER BY linea
+                WHERE tabla = %s AND marca = %s
+                  {cil_filter3} AND {col_anio} > 0
+                ORDER BY ABS(cilindraje - {cil_vehiculo if cil_vehiculo else 0}), linea
                 LIMIT 30
-            """, (tabla, marca))
+            """, params3)
             rows = cur.fetchall()
 
         cur.close()
