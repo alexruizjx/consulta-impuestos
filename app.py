@@ -894,6 +894,54 @@ def tramites_precio():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/reportar", methods=["POST"])
+def reportar():
+    try:
+        data      = request.get_json()
+        tipo      = data.get("tipo", "").strip()
+        comentario = data.get("comentario", "").strip()
+        placa     = data.get("placa", "").strip().upper()
+        municipio = data.get("municipio", "").strip().upper()
+        pagina    = data.get("pagina", "").strip()
+        if not tipo:
+            return jsonify({"ok": False, "error": "Tipo requerido"}), 400
+        conn = get_db_conn()
+        cur  = conn.cursor()
+        cur.execute("""
+            INSERT INTO reportes_usuarios (tipo, comentario, placa, municipio, pagina)
+            VALUES (%s, %s, %s, %s, %s)
+        """, (tipo, comentario, placa, municipio, pagina))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/reportar/lista", methods=["GET"])
+def reportar_lista():
+    try:
+        conn = get_db_conn()
+        cur  = conn.cursor()
+        cur.execute("""
+            SELECT id, tipo, comentario, placa, municipio, pagina, creado_en
+            FROM reportes_usuarios
+            ORDER BY creado_en DESC
+            LIMIT 100
+        """)
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        return jsonify({"reportes": [{
+            "id": r[0], "tipo": r[1], "comentario": r[2],
+            "placa": r[3], "municipio": r[4], "pagina": r[5],
+            "fecha": str(r[6])
+        } for r in rows]})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/debug-env", methods=["GET"])
 def debug_env():
     return jsonify({"DATABASE_URL": os.environ.get("DATABASE_URL", "NO EXISTE"), "ANTHROPIC_API_KEY": os.environ.get("ANTHROPIC_API_KEY", "NO EXISTE")})
