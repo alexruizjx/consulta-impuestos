@@ -942,6 +942,20 @@ def reportar_lista():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/reportar/eliminar/<int:reporte_id>", methods=["DELETE"])
+def reportar_eliminar(reporte_id):
+    try:
+        conn = get_db_conn()
+        cur  = conn.cursor()
+        cur.execute("DELETE FROM reportes_usuarios WHERE id = %s", (reporte_id,))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 @app.route("/debug-env", methods=["GET"])
 def debug_env():
     return jsonify({"DATABASE_URL": os.environ.get("DATABASE_URL", "NO EXISTE"), "ANTHROPIC_API_KEY": os.environ.get("ANTHROPIC_API_KEY", "NO EXISTE")})
