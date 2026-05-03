@@ -1,1173 +1,2143 @@
-import base64, re, io
-from PIL import Image
-import pytesseract
-import os
-import psycopg2
-import re
-import time
-import uuid
-import json
-import requests
-import threading
-from datetime import datetime
-from flask import Flask, request, jsonify
-from playwright.sync_api import sync_playwright
-from flask_cors import CORS
+<!-- Formulario Consulta Vehicular Antioquia v6 -->
 
-app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*"}})
+<style>
+  .ant-app-navbar {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 9999;
+    background: #1a2340; height: 48px;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+  }
+  .ant-app-navbar-titulo {
+    font-family: Arial, sans-serif; font-size: 16px; font-weight: 900;
+    color: #fff; letter-spacing: 1px;
+  }
+  .ant-app-navbar-salir {
+    font-family: Arial, sans-serif; font-size: 13px; font-weight: 700;
+    color: #fff; text-decoration: none; padding: 6px 14px;
+    border: 1px solid rgba(255,255,255,0.3); border-radius: 6px;
+    transition: background .2s;
+  }
+  .ant-app-navbar-salir:hover { background: rgba(255,255,255,0.12); }
 
-TIMEOUT = 10000
-MSG_NO_MATRICULADO = "El vehiculo no se encuentra matriculado en la Secretaria de Movilidad"
-AÑO_ACTUAL = str(datetime.now().year)
+  .ant-wrap { max-width: 760px; margin: 0 auto; padding: 58px 8px 24px 8px; font-family: Arial, sans-serif; }
 
-TWOCAPTCHA_API_KEY = "47a18b883a00d513b2c78b0ac2cd0f00"
-EMTRASUR_SITE_KEY  = "6Leshn4sAAAAAIas9tkeW3vKPg0a4uYqw-7fG7Pn"
-EMTRASUR_URL       = "https://sistematizacion.emtrasur.com.co/"
-ANTIOQUIA_SITE_KEY = "0x4AAAAAACJy_BR2tRNN1cnv"
-ANTIOQUIA_URL      = "https://www.vehiculosantioquia.com.co/impuestosweb/#/public"
-ANTIOQUIA_API      = "https://www.vehiculosantioquia.com.co/raiz-backimpuestosweb/backimpuestosweb"
+  .ant-top { background: #fff; border: 1px solid #dde3ec; border-radius: 10px; padding: 13px 18px; margin-bottom: 10px; }
 
-# ============================================================
-#  TABLA DE TIPOS DE DOCUMENTO ANTIOQUIA
-# ============================================================
-ANTIOQUIA_TIPOS_DOCUMENTO = {
-    "1":  {"abreviatura": "CC",    "nombre": "Cédula de Ciudadanía"},
-    "8":  {"abreviatura": "CD",    "nombre": "Carnet Diplomático"},
-    "5":  {"abreviatura": "CE",    "nombre": "Cédula de Extranjería"},
-    "2":  {"abreviatura": "NIT",   "nombre": "NIT"},
-    "4":  {"abreviatura": "PASAP", "nombre": "Pasaporte"},
-    "29": {"abreviatura": "PPT",   "nombre": "Permiso por protección temporal"},
-    "7":  {"abreviatura": "RC",    "nombre": "Registro Civil"},
-    "6":  {"abreviatura": "TI",    "nombre": "Tarjeta de Identidad"},
-}
+  .ant-card { background: #fff; border: 1px solid #dde3ec; border-radius: 10px; padding: 16px 18px; margin-bottom: 10px; display: none; }
+  .ant-card.visible { display: block; }
+  .ant-card-liq { background: #fff; border: 1px solid #dde3ec; border-radius: 10px; padding: 16px 18px; margin-bottom: 10px; }
 
-# Mapa de abreviatura entrante → id numérico
-ANTIOQUIA_TIPO_DOC_MAP = {
-    "CC": "1", "NIT": "2", "PASAP": "4", "CE": "5",
-    "TI": "6", "RC": "7", "CD": "8", "PPT": "29"
-}
+  .ant-bloque-titulo {
+    font-size: 15px; font-weight: 900; color: #fff;
+    background: #1a2340; border-radius: 7px;
+    padding: 11px 16px; margin-bottom: 16px;
+    display: flex; align-items: center; justify-content: space-between;
+    text-align: center; text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  .ant-bloque-titulo-texto { flex: 1; text-align: center; }
+  .ant-bloque-titulo-chevron { font-size: 14px; min-width: 20px; text-align: right; }
+  .ant-bloque-titulo-left { min-width: 20px; }
 
-ANTIOQUIA_LIMITE_VIGENCIAS = 10
+  .ant-bienvenida { text-align: center; padding: 4px 20px 6px; margin-bottom: 6px; }
+  .ant-bienvenida-titulo { font-size: 22px; font-weight: 900; color: #0047AB; margin-bottom: 6px; }
+  .ant-bienvenida-sub { font-size: 15px; color: #555; line-height: 1.6; }
+
+  /* Botones entrada */
+  .ant-entrada-btns { display: flex; gap: 8px; margin-bottom: 14px; }
+  .ant-entrada-btn {
+    flex: 1; padding: 10px 6px; border: 2px solid #dde3ec; border-radius: 9px;
+    background: #f8fafc; cursor: pointer; font-size: 12px; font-weight: 700;
+    color: #1a2340; text-align: center; transition: all .2s;
+  }
+  .ant-entrada-btn:hover { border-color: #3b7de8; background: #f0f6ff; color: #1a5fa8; }
+  .ant-entrada-btn.activo { border-color: #1a5fa8; background: #e8f0f8; color: #1a5fa8; }
+  .ant-entrada-btn .ant-entrada-icon { font-size: 22px; display: block; margin-bottom: 4px; }
+
+  /* Municipio */
+  .ant-mun-wrap { position: relative; }
+  .ant-mun-input {
+    width: 100%; padding: 10px 14px; border: 1px solid #ccd3de;
+    border-radius: 7px; font-size: 16px; box-sizing: border-box;
+    outline: none; transition: border .2s; background: #fff;
+    text-align: center;
+  }
+  .ant-mun-input:focus { border-color: #3b7de8; }
+  .ant-mun-lista {
+    border: 1px solid #ccd3de; border-top: none;
+    border-radius: 0 0 7px 7px; max-height: 200px;
+    overflow-y: auto; background: white;
+    position: absolute; width: 100%; z-index: 1000; display: none;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+  }
+  .ant-mun-lista div { padding: 10px 14px; cursor: pointer; font-size: 16px; text-align: center; }
+  .ant-mun-lista div:hover, .ant-mun-lista div.activo { background: #e8f0f8; font-weight: 600; }
+
+  .ant-mun-confirm {
+    display: none; margin-top: 14px; text-align: center;
+    background: #f0f6ff; border: 1px solid #c5d8f5;
+    border-radius: 10px; padding: 16px 20px;
+  }
+  .ant-mun-confirm-texto { font-size: 14px; color: #1a2340; margin-bottom: 12px; }
+  .ant-mun-confirm-texto strong { font-size: 16px; color: #0047AB; }
+  .ant-mun-confirm-btns { display: flex; gap: 10px; justify-content: center; }
+  .ant-mun-confirm-btn { padding: 9px 20px; border: none; border-radius: 7px; font-size: 14px; font-weight: 700; cursor: pointer; transition: background .2s; }
+  .ant-mun-confirm-si  { background: #1a6e3c; color: #fff; }
+  .ant-mun-confirm-si:hover  { background: #2a9e5c; }
+  .ant-mun-confirm-no  { background: #e8f0f8; color: #1a2340; border: 1px solid #c5d8f5; }
+  .ant-mun-confirm-no:hover  { background: #d0e0f0; }
+
+  /* OCR */
+  .ant-ocr-zone {
+    border: 2px dashed #3b7de8; border-radius: 10px; padding: 22px;
+    text-align: center; background: #f0f6ff; cursor: pointer;
+    margin-bottom: 14px; transition: background 0.2s; position: relative;
+  }
+  .ant-ocr-zone:hover, .ant-ocr-zone.dragover { background: #dceeff; border-color: #1a2340; }
+  .ant-ocr-zone input[type="file"] { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; z-index: 2; }
+  .ant-ocr-icon { font-size: 30px; margin-bottom: 4px; }
+  .ant-ocr-texto { font-size: 14px; color: #3b7de8; font-weight: 600; }
+  .ant-ocr-sub { font-size: 12px; color: #888; margin-top: 3px; }
+  .ant-ocr-preview { max-height: 130px; border-radius: 7px; margin-top: 8px; border: 1px solid #ccd3de; position: relative; z-index: 1; display: block; margin-left: auto; margin-right: auto; }
+  .ant-ocr-status { font-size: 26px; line-height: 1.4; margin-top: 8px; padding: 12px 16px; border-radius: 6px; display: none; text-align: center; font-weight: 700; }
+  .ant-ocr-status.procesando { background: #fff3cd; color: #856404; }
+  .ant-ocr-status.ok  { background: #f0fff6; color: #1a6e3c; }
+  .ant-ocr-status.err { background: #fff0f0; color: #c0392b; }
+
+  /* Campos */
+  .ant-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 8px; }
+  .ant-grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 14px; }
+  @media(max-width: 560px) { .ant-grid { grid-template-columns: repeat(2, 1fr); } }
+  .ant-group { position: relative; }
+  .ant-label { display: block; font-size: 11px; font-weight: 700; color: #555; margin-bottom: 2px; text-transform: uppercase; letter-spacing: 0.4px; }
+  .ant-input {
+    width: 100%; padding: 9px 12px; border: 1px solid #ccd3de;
+    border-radius: 7px; font-size: 14px; box-sizing: border-box;
+    outline: none; transition: border .2s; background: #fff;
+  }
+  .ant-input:focus { border-color: #3b7de8; }
+  .ant-input.upper { text-transform: uppercase; }
+
+  /* Botones */
+  .ant-btn {
+    width: auto; padding: 9px 3px; border: none; border-radius: 7px;
+    font-size: 14px; font-weight: 700; cursor: pointer;
+    transition: background .2s; display: flex;
+    align-items: center; justify-content: center; gap: 8px; margin-top: 12px;
+    min-width: 140px; margin-left: auto; margin-right: auto;
+  }
+  .ant-btn-verde  { background: #1a6e3c; color: #fff; }
+  .ant-btn-verde:hover  { background: #2a9e5c; }
+  .ant-btn-azul   { background: #1a5fa8; color: #fff; }
+  .ant-btn-azul:hover   { background: #2a7fd8; }
+  .ant-btn-wa     { background: #25D366; color: #fff; }
+  .ant-btn-wa:hover     { background: #1da851; }
+  .ant-btn:disabled { background: #9aabc2; cursor: not-allowed; }
+
+  .ant-no-depto { background: #fff3cd; border: 1px solid #ffc107; border-radius: 7px; padding: 10px 14px; color: #856404; font-size: 13px; font-weight: 600; display: none; }
+
+  /* Tramites con autocomplete y X */
+  .ant-tramite-bloque { background: #f8fafc; border: 1px solid #e0e7ef; border-radius: 8px; padding: 12px; margin-bottom: 10px; position: relative; }
+  .ant-tramite-num { font-size: 11px; font-weight: 700; color: #1a5fa8; text-transform: uppercase; margin-bottom: 7px; display: flex; justify-content: space-between; align-items: center; }
+  .ant-tramite-x {
+    background: none; border: none; color: #c0392b; font-size: 18px; font-weight: 900;
+    cursor: pointer; padding: 0 4px; line-height: 1; display: none;
+  }
+  .ant-tramite-x:hover { color: #e74c3c; }
+
+  /* Autocomplete tramite */
+  .ant-tram-wrap { position: relative; }
+  .ant-tram-input {
+    width: 100%; padding: 9px 12px; border: 1px solid #ccd3de;
+    border-radius: 7px; font-size: 14px; box-sizing: border-box;
+    outline: none; background: #fff; transition: border .2s;
+  }
+  .ant-tram-input:focus { border-color: #3b7de8; }
+  .ant-tram-input:disabled { background: #f5f5f5; color: #999; cursor: not-allowed; }
+  .ant-tram-lista {
+    border: 1px solid #ccd3de; border-top: none;
+    border-radius: 0 0 7px 7px; max-height: 180px;
+    overflow-y: auto; background: white;
+    position: absolute; width: 100%; z-index: 1000; display: none;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+  }
+  .ant-tram-lista div { padding: 9px 14px; cursor: pointer; font-size: 13px; }
+  .ant-tram-lista div:hover, .ant-tram-lista div.activo { background: #e8f0f8; font-weight: 600; }
+
+  .ant-tarifa-precio-inline {
+    display: none; margin-top: 7px; padding: 7px 12px;
+    background: #e8f5e9; border: 1px solid #a5d6a7; border-radius: 6px;
+    font-size: 14px; color: #1a6e3c; font-weight: 700;
+  }
+
+  /* Resultados */
+  .ant-result { margin-top: 12px; }
+  .ant-alert  { padding: 12px 16px; border-radius: 7px; font-size: 14px; margin-bottom: 10px; }
+  .ant-alert.error   { background: #fff0f0; border: 1px solid #f5c6c6; color: #c0392b; }
+  .ant-alert.success { background: #f0fff6; border: 1px solid #b2e4c8; color: #1a6e3c; }
+  .ant-info { display: flex; gap: 16px; margin-bottom: 12px; flex-wrap: wrap; }
+  .ant-info-item label { font-size: 11px; color: #888; display: block; margin-bottom: 2px; }
+  .ant-info-item span  { font-size: 13px; font-weight: 600; color: #1a2340; }
+  .ant-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .ant-table th { background: #f4f6fb; color: #555; font-weight: 600; padding: 8px 10px; text-align: left; border-bottom: 2px solid #dde3ec; }
+  .ant-table td { padding: 8px 10px; border-bottom: 1px solid #eef0f5; color: #333; }
+  .ant-table tr:last-child td { border-bottom: none; }
+  .ant-total-bar { display: flex; justify-content: space-between; align-items: center; background: #1a2340; color: #fff; border-radius: 7px; padding: 12px 16px; margin-top: 12px; }
+  .ant-total-bar span:first-child { font-size: 13px; opacity: .85; }
+  .ant-total-bar span:last-child  { font-size: 20px; font-weight: 700; }
+  .ant-extra { display: flex; justify-content: space-between; padding: 8px 14px; background: #f4f6fb; border-radius: 6px; margin-top: 6px; font-size: 13px; color: #444; }
+  .ant-loading { display: flex; align-items: center; gap: 12px; padding: 18px 0; color: #555; font-size: 14px; }
+  .ant-spinner-ring { width: 24px; height: 24px; border-radius: 50%; flex-shrink: 0; border: 3px solid #dde3ec; border-top-color: #1a2340; animation: ant-spin .8s linear infinite; }
+  @keyframes ant-spin { to { transform: rotate(360deg); } }
+  .ant-warning { background: #fff3cd; border: 1px solid #ffc107; border-radius: 7px; padding: 10px 14px; color: #856404; font-size: 13px; margin-top: 10px; }
+
+  /* Liquidacion */
+  .ant-liq-item { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid #eef0f5; }
+  .ant-liq-item:last-child { border-bottom: none; }
+  .ant-liq-nombre { font-size: 13px; color: #444; font-weight: 600; }
+  .ant-liq-input { width: 140px; padding: 7px 10px; border: 1px solid #ccd3de; border-radius: 6px; font-size: 13px; text-align: right; box-sizing: border-box; outline: none; }
+  .ant-liq-input:focus { border-color: #3b7de8; }
+  .ant-liq-total { background: #1a2340; color: #fff; border-radius: 8px; padding: 14px 18px; margin-top: 16px; display: flex; justify-content: space-between; align-items: center; }
+  .ant-liq-total span:first-child { font-size: 14px; opacity: .85; }
+  .ant-liq-total span:last-child  { font-size: 24px; font-weight: 900; }
+  .ant-liq-nota { font-size: 11px; color: #888; margin-top: 8px; text-align: center; }
+  .ant-liq-cobro { display: grid; grid-template-columns: 1fr 140px 32px; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid #eef0f5; }
+  .ant-liq-cobro-nombre { font-size: 13px; color: #444; border: 1px solid #ccd3de; border-radius: 6px; padding: 6px 10px; outline: none; width: 100%; box-sizing: border-box; }
+  .ant-liq-cobro-nombre:focus { border-color: #3b7de8; }
+  .ant-liq-btn-add { background: #1a5fa8; color: #fff; border: none; border-radius: 6px; width: 32px; height: 32px; font-size: 20px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background .2s; flex-shrink: 0; }
+  .ant-liq-btn-add:hover { background: #2a7fd8; }
+  .ant-liq-btn-del { background: #c0392b; color: #fff; border: none; border-radius: 6px; width: 32px; height: 32px; font-size: 18px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background .2s; flex-shrink: 0; }
+  .ant-liq-btn-del:hover { background: #e74c3c; }
+  .ant-wa-preview { margin-top: 12px; border-radius: 8px; overflow: hidden; border: 1px solid #dde3ec; display: none; }
+  .ant-wa-preview img { width: 100%; display: block; }
+
+  /* Botón reporte */
+  .ant-reporte-btn {
+    position: fixed; bottom: 20px; right: 20px; z-index: 9998;
+    background: #1a2340; color: #fff; border: none; border-radius: 50px;
+    padding: 10px 16px; font-size: 12px; font-weight: 700; cursor: pointer;
+    box-shadow: 0 3px 10px rgba(0,0,0,0.2); transition: background .2s;
+    display: flex; align-items: center; gap: 6px; font-family: Arial, sans-serif;
+  }
+  .ant-reporte-btn:hover { background: #2a3a60; }
+  .ant-reporte-panel {
+    position: fixed; bottom: 70px; right: 20px; z-index: 9997;
+    background: #fff; border: 1px solid #dde3ec; border-radius: 12px;
+    padding: 18px; width: 280px; box-shadow: 0 6px 24px rgba(0,0,0,0.15);
+    display: none; font-family: Arial, sans-serif;
+  }
+  .ant-reporte-titulo { font-size: 14px; font-weight: 700; color: #1a2340; margin-bottom: 12px; }
+  .ant-reporte-opciones { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+  .ant-reporte-opcion {
+    padding: 6px 12px; border: 1px solid #dde3ec; border-radius: 20px;
+    font-size: 12px; cursor: pointer; transition: all .2s; color: #444;
+    background: #f8fafc;
+  }
+  .ant-reporte-opcion:hover, .ant-reporte-opcion.sel { background: #1a2340; color: #fff; border-color: #1a2340; }
+  .ant-reporte-textarea {
+    width: 100%; border: 1px solid #ccd3de; border-radius: 7px;
+    padding: 8px 10px; font-size: 12px; resize: none; outline: none;
+    box-sizing: border-box; margin-bottom: 10px; font-family: Arial, sans-serif;
+  }
+  .ant-reporte-textarea:focus { border-color: #3b7de8; }
+  .ant-reporte-enviar {
+    width: 100%; padding: 9px; background: #1a6e3c; color: #fff;
+    border: none; border-radius: 7px; font-size: 13px; font-weight: 700;
+    cursor: pointer; transition: background .2s;
+  }
+  .ant-reporte-enviar:hover { background: #2a9e5c; }
+  .ant-reporte-ok { font-size: 13px; color: #1a6e3c; font-weight: 700; text-align: center; display: none; margin-top: 8px; }
+
+  /* Progreso consulta Antioquia */
+  .ant-progreso-wrap { margin: 12px 0; }
+  .ant-progreso-msg { font-size: 14px; color: #1a2340; font-weight: 600; margin-bottom: 8px; min-height: 20px; }
+  .ant-progreso-barra-bg { background: #eef0f5; border-radius: 10px; height: 10px; overflow: hidden; }
+  .ant-progreso-barra { background: linear-gradient(90deg, #1a5fa8, #25D366); height: 10px; border-radius: 10px; width: 0%; transition: width 0.5s ease; }
+
+  /* Retefuente */
+  .ant-ret-opcion {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 10px 14px; border: 1px solid #dde3ec; border-radius: 7px;
+    margin-bottom: 8px; cursor: pointer; transition: background .2s;
+    font-size: 13px;
+  }
+  .ant-ret-opcion:hover { background: #f0f6ff; border-color: #3b7de8; }
+  .ant-ret-opcion.seleccionada { background: #e8f5e9; border-color: #1a6e3c; }
+  .ant-ret-opcion-nombre { color: #1a2340; font-weight: 600; flex: 1; }
+  .ant-ret-opcion-valor { color: #1a6e3c; font-weight: 700; text-align: right; min-width: 120px; }
+
+  /* Preview con orientación */
+  .ant-preview-wrap { display: none; margin-bottom: 12px; }
+  .ant-preview-aviso {
+    background: #fff3cd; border: 1px solid #ffc107; border-radius: 8px;
+    padding: 10px 14px; font-size: 15px; color: #856404; font-weight: 600;
+    margin-bottom: 8px; text-align: center;
+  }
+  .ant-preview-img-wrap { position: relative; text-align: center; margin-bottom: 8px; }
+  .ant-preview-img-wrap img { max-height: 180px; border-radius: 8px; border: 1px solid #ccd3de; transition: transform 0.3s; }
+  .ant-btn-girar {
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    background: #1a5fa8; color: #fff; border: none; border-radius: 7px;
+    padding: 11px 24px; font-size: 15px; font-weight: 700; cursor: pointer;
+    margin: 0 auto 10px auto; transition: background .2s;
+  }
+  .ant-btn-girar:hover { background: #2a7fd8; }
+  .ant-btn-continuar {
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    background: #1a6e3c; color: #fff; border: none; border-radius: 7px;
+    padding: 11px 24px; font-size: 15px; font-weight: 700; cursor: pointer;
+    margin: 0 auto; transition: background .2s; width: 100%;
+  }
+  .ant-btn-continuar:hover { background: #2a9e5c; }
+</style>
+
+<div class="ant-app-navbar">
+  <span class="ant-app-navbar-titulo">🚗 TRAMY</span>
+  <a href="https://juridicox.com/" class="ant-app-navbar-salir">Salir →</a>
+</div>
+
+<div class="ant-wrap">
+
+  <!-- OCR + MUNICIPIO — SIEMPRE VISIBLES -->
+  <div class="ant-top">
+    <div class="ant-bienvenida" id="ant-bienvenida">
+      <div style="text-align:center; margin-bottom:6px;">
+        <span style="font-size:18px; font-weight:900; color:#0047AB;">Hola, </span><span style="font-size:32px; font-weight:900; color:#0047AB;">soy Tramy</span>
+      </div>
+      <div style="font-size:16px; color:#1a2340; text-align:center; line-height:1.6; font-family:Arial, sans-serif; font-weight:700;">Hagamos esto juntos.<br>Yo liquido, tú haces la magia.</div>
+    </div>
+
+    <!-- Botones de entrada -->
+    <div class="ant-entrada-btns">
+      <div class="ant-entrada-btn" id="btn-entrada-camara" onclick="antModoEntrada('camara')">
+        <span class="ant-entrada-icon">📷</span>
+        Tomar foto
+      </div>
+      <div class="ant-entrada-btn activo" id="btn-entrada-ocr" onclick="antModoEntrada('ocr')">
+        <span class="ant-entrada-icon">🖼️</span>
+        Subir o arrastrar
+      </div>
+      <div class="ant-entrada-btn" id="btn-entrada-manual" onclick="antModoEntrada('manual')">
+        <span class="ant-entrada-icon">✏️</span>
+        Ingresar manualmente
+      </div>
+    </div>
+
+    <!-- Input cámara (oculto) -->
+    <input type="file" id="ant-camara-file" accept="image/*" capture="environment" style="display:none">
+
+    <!-- Zona OCR (subir/arrastrar) -->
+    <div id="ant-zona-ocr">
+      <div class="ant-ocr-zone" id="ant-ocr-zone">
+        <input type="file" id="ant-ocr-file" accept="image/*">
+        <div class="ant-ocr-icon">🖼️</div>
+        <div class="ant-ocr-texto">Haz clic aqui o arrastra la tarjeta de propiedad</div>
+        <div class="ant-ocr-sub">JPG, PNG o WEBP</div>
+      </div>
+      <!-- Panel de orientación -->
+      <div class="ant-preview-wrap" id="ant-preview-wrap">
+        <div class="ant-preview-aviso">⚠️ Mira que la foto esté bien orientada.<br>Si se te dificulta a ti leerla, a mí también.</div>
+        <div class="ant-preview-img-wrap">
+          <img id="ant-ocr-preview" src="">
+        </div>
+        <div style="display:flex; gap:8px; margin-bottom:10px;">
+          <button class="ant-btn-girar" style="flex:1; margin:0;" onclick="antGirarImagen()">↻ Girar imagen</button>
+          <button onclick="antEliminarImagen()" style="
+            background:#c0392b; color:#fff; border:none; border-radius:7px;
+            padding:11px 16px; font-size:15px; font-weight:700; cursor:pointer;
+            transition:background .2s;" onmouseover="this.style.background='#e74c3c'" onmouseout="this.style.background='#c0392b'">
+            🗑 Eliminar
+          </button>
+        </div>
+        <button class="ant-btn-continuar" onclick="antContinuarOCR()">✓ La foto está bien, continuar</button>
+      </div>
+      <div class="ant-ocr-status" id="ant-ocr-status"></div>
+    </div>
+
+    <!-- Municipio -->
+    <div id="ant-municipio-wrap" style="margin-top:14px; display:none; text-align:center;">
+      <div class="ant-mun-confirm" id="ant-mun-confirm">
+        <div class="ant-mun-confirm-texto">El municipio registrado es <strong id="ant-mun-confirm-nombre"></strong>. Es correcto?</div>
+        <div class="ant-mun-confirm-btns">
+          <button class="ant-mun-confirm-btn ant-mun-confirm-si" onclick="antConfirmarMunicipio(true)">Si, es correcto</button>
+          <button class="ant-mun-confirm-btn ant-mun-confirm-no" onclick="antConfirmarMunicipio(false)">No, quiero cambiarlo</button>
+        </div>
+      </div>
+      <label class="ant-label" for="ant-municipio-input" id="ant-mun-label" style="text-align:center; display:none;">Municipio</label>
+      <div class="ant-mun-wrap" id="ant-mun-campo" style="max-width:400px; margin:0 auto; display:none;">
+        <input type="text" class="ant-mun-input" id="ant-municipio-input" placeholder="Escribe o selecciona el municipio..." autocomplete="off">
+        <input type="hidden" id="ant-municipio">
+        <div class="ant-mun-lista" id="ant-mun-lista"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- BLOQUE 1 — INFORMACION -->
+  <div class="ant-card" id="bloque-info">
+    <!-- Cabecera con colapso -->
+    <div class="ant-bloque-titulo" style="cursor:pointer; justify-content:space-between;" onclick="antToggleInfo()">
+      <span class="ant-bloque-titulo-left" style="opacity:0;">▲</span>
+      <span class="ant-bloque-titulo-texto" id="titulo-info">PASO 1 — INFORMACION</span>
+      <span class="ant-bloque-titulo-chevron" id="ant-info-chevron">▲</span>
+    </div>
+
+    <!-- Vista colapsada -->
+    <div id="ant-info-colapsado" style="display:none; padding:6px 0 4px 0; font-size:13px; color:#555;">
+      <span id="ant-info-resumen"></span>
+      <span style="color:#1a5fa8; font-weight:700; margin-left:8px; cursor:pointer;" onclick="antToggleInfo()">Ver todo ▼</span>
+    </div>
+
+    <!-- Contenido completo -->
+    <div id="ant-info-contenido">
+      <div style="margin-bottom:8px; text-align:center;">
+        <label class="ant-label" style="text-align:center; display:none;">Placa</label>
+        <div style="
+          display:inline-block; position:relative; margin-top:4px;
+          box-shadow: 3px 3px 10px rgba(0,0,0,0.25); border-radius:6px; overflow:hidden;
+        ">
+          <!-- Fondo placa colombiana -->
+          <div style="
+            background:#FDD835; border:3px solid #111;
+            border-radius:6px; padding:8px 10px 6px 10px; width:220px;
+            position:relative; box-sizing:border-box;
+          ">
+            <!-- Caracteres + escudo en fila -->
+            <div style="display:flex; align-items:center; justify-content:center; gap:0;">
+
+              <!-- Primeras 3 letras -->
+              <div id="ant-placa-letras" style="
+                font-size:28px; font-weight:900; letter-spacing:4px;
+                color:#111; font-family:'Arial Black', Arial, sans-serif;
+                min-width:80px; text-align:center;
+              ">---</div>
+
+              <!-- Últimos 3 caracteres -->
+              <div id="ant-placa-numeros" style="
+                font-size:28px; font-weight:900; letter-spacing:4px;
+                color:#111; font-family:'Arial Black', Arial, sans-serif;
+                min-width:80px; text-align:center;
+              ">---</div>
+            </div>
+
+            <!-- Input oculto que guarda el valor real -->
+            <input id="ant-placa" type="text" maxlength="7"
+              style="position:absolute; opacity:0; pointer-events:none; width:1px; height:1px;">
+
+            <!-- Municipio -->
+            <div id="ant-placa-municipio" style="
+              font-size:10px; font-weight:900; color:#111; text-align:center;
+              letter-spacing:2px; margin-top:3px; text-transform:uppercase;
+            ">MUNICIPIO</div>
+          </div>
 
 
-def get_db_conn():
-    return psycopg2.connect(os.environ["DATABASE_URL"])
+        </div>
+      </div>
+
+      <div class="ant-grid">
+        <div class="ant-group">
+          <label class="ant-label" for="ant-tipodoc">Tipo Documento</label>
+          <select class="ant-input" id="ant-tipodoc">
+            <option value="CC">C.C. - Cedula de Ciudadania</option>
+            <option value="NIT">NIT</option>
+            <option value="CE">C.E. - Cedula de Extranjeria</option>
+            <option value="TI">T.I. - Tarjeta de Identidad</option>
+            <option value="RC">R.C. - Registro Civil</option>
+            <option value="PPT">P.P.T. - Permiso por Proteccion Temporal</option>
+          </select>
+        </div>
+        <div class="ant-group">
+          <label class="ant-label" for="ant-cedula">Identificacion</label>
+          <input class="ant-input" id="ant-cedula" type="text" inputmode="numeric" placeholder="Ej: 1128402520">
+        </div>
+        <div class="ant-group">
+          <label class="ant-label" for="ant-apellidos">Apellidos / Razon Social</label>
+          <input class="ant-input upper" id="ant-apellidos" type="text" placeholder="Ej: LOPEZ AGUDELO">
+        </div>
+        <div class="ant-group">
+          <label class="ant-label" for="ant-modelo">Modelo</label>
+          <input class="ant-input" id="ant-modelo" type="text" inputmode="numeric" placeholder="Ej: 2015" maxlength="4">
+        </div>
+        <div class="ant-group" style="display:none;">
+          <label class="ant-label">Municipio</label>
+          <input class="ant-input upper" id="ant-municipio-info" type="text" readonly style="background:#f4f6fb; color:#1a2340; font-weight:700;">
+        </div>
+        <div class="ant-group">
+          <label class="ant-label" for="ant-marca">Marca</label>
+          <input class="ant-input upper" id="ant-marca" type="text" placeholder="Ej: CHEVROLET">
+        </div>
+        <div class="ant-group">
+          <label class="ant-label" for="ant-linea">Linea</label>
+          <input class="ant-input upper" id="ant-linea" type="text" placeholder="Ej: SPARK">
+        </div>
+        <div class="ant-group">
+          <label class="ant-label" for="ant-cilindrada">Cilindraje (cc)</label>
+          <input class="ant-input" id="ant-cilindrada" type="text" placeholder="Ej: 1200">
+        </div>
+        <div class="ant-group">
+          <label class="ant-label" for="ant-capacidad">Capacidad</label>
+          <input class="ant-input" id="ant-capacidad" type="text" placeholder="Ej: 5">
+        </div>
+        <div class="ant-group" style="display:none;">
+          <label class="ant-label" for="ant-carroceria">Carroceria</label>
+          <input class="ant-input upper" id="ant-carroceria" type="text" placeholder="Ej: SEDAN">
+        </div>
+        <div class="ant-group">
+          <label class="ant-label" for="ant-clase">Clase de Vehiculo</label>
+          <input class="ant-input upper" id="ant-clase" type="text" placeholder="Ej: AUTOMOVIL">
+        </div>
+        <div class="ant-group">
+          <label class="ant-label" for="ant-servicio">Servicio</label>
+          <input class="ant-input upper" id="ant-servicio" type="text" placeholder="Ej: PARTICULAR">
+        </div>
+      </div>
+
+      <button class="ant-btn ant-btn-verde" onclick="antConfirmarInfo()" style="margin-top:8px;">
+        ✓ He comparado los datos y están bien
+      </button>
+    </div>
+  </div>
+
+  <!-- BLOQUE 2 — IMPUESTO DEPARTAMENTAL -->
+  <div class="ant-card" id="bloque-depto">
+    <div class="ant-bloque-titulo" style="cursor:pointer;" onclick="antToggleBloque('depto')">
+      <span class="ant-bloque-titulo-left"></span><span class="ant-bloque-titulo-texto" id="titulo-depto">PASO 2 — IMPUESTO DEPARTAMENTAL</span><span class="ant-bloque-titulo-chevron" id="chevron-depto">▲</span>
+    </div>
+    <div id="contenido-depto">
+    <div class="ant-no-depto" id="ant-no-depto" style="display:none">⚠️ Este vehiculo NO PAGA IMPUESTOS DEPARTAMENTALES</div>
+    <button class="ant-btn ant-btn-verde" id="ant-btn-impuesto" style="display:none">🏛️ Consultar</button>
+    <div class="ant-result" id="ant-result-depto"></div>
+    </div>
+  </div>
+
+  <!-- BLOQUE 3 — IMPUESTO MUNICIPAL -->
+  <div class="ant-card" id="bloque-municipal">
+    <div class="ant-bloque-titulo" style="cursor:pointer;" onclick="antToggleBloque('municipal')">
+      <span class="ant-bloque-titulo-left"></span><span class="ant-bloque-titulo-texto" id="titulo-municipal">PASO 3 — IMPUESTO MUNICIPAL</span><span class="ant-bloque-titulo-chevron" id="chevron-municipal">▲</span>
+    </div>
+    <div id="contenido-municipal">
+    <button class="ant-btn ant-btn-azul" id="ant-btn-municipal">🏘️ Consultar</button>
+    <div class="ant-result" id="ant-result-municipal"></div>
+    </div>
+  </div>
+
+  <!-- BLOQUE RETEFUENTE -->
+  <div class="ant-card" id="bloque-retefuente" style="display:none;">
+    <div class="ant-bloque-titulo" style="cursor:pointer;" onclick="antToggleBloque('ret')">
+      <span class="ant-bloque-titulo-left"></span><span class="ant-bloque-titulo-texto" id="titulo-ret">PASO 4 — RETEFUENTE</span><span class="ant-bloque-titulo-chevron" id="chevron-ret">▲</span>
+    </div>
+    <div id="contenido-ret">
+      <p style="font-size:13px; color:#555; margin:0 0 12px 0;">
+        Selecciona la línea que corresponde a tu vehículo para calcular el avalúo y la retefuente.
+      </p>
+      <div id="ant-ret-estado" style="font-size:13px; color:#888; margin-bottom:10px;"></div>
+      <div id="ant-ret-opciones"></div>
+      <div id="ant-ret-resultado" style="display:none; margin-top:12px;">
+        <div style="background:#f0fff6; border:1px solid #b2e4c8; border-radius:7px; padding:14px 16px;">
+          <div style="font-size:13px; color:#888; margin-bottom:4px;">Línea seleccionada</div>
+          <div id="ant-ret-linea-sel" style="font-size:14px; font-weight:700; color:#1a2340; margin-bottom:10px;"></div>
+          <div style="display:flex; gap:20px; flex-wrap:wrap;">
+            <div><div style="font-size:11px; color:#888;">Avalúo Comercial</div><div id="ant-ret-avaluo" style="font-size:18px; font-weight:900; color:#1a2340;"></div></div>
+            <div><div style="font-size:11px; color:#888;">Retefuente (1%)</div><div id="ant-ret-retefuente" style="font-size:18px; font-weight:900; color:#1a6e3c;"></div></div>
+          </div>
+          <button class="ant-btn ant-btn-verde" onclick="antUsarRetefuente()" style="margin-top:12px;">
+            ✓ Usar este valor en la liquidación
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
 
 
-def bloquear_recursos(page):
-    page.route("**/*", lambda route: route.abort()
-               if route.request.resource_type in ["image", "stylesheet", "font", "media", "other"]
-               else route.continue_())
+  <!-- BLOQUE 4 — TRAMITES -->
+  <div class="ant-card" id="bloque-tramites">
+    <div class="ant-bloque-titulo" style="cursor:pointer;" onclick="antToggleBloque('tramites')">
+      <span class="ant-bloque-titulo-left"></span><span class="ant-bloque-titulo-texto" id="titulo-tramites">PASO 5 — TRAMITES</span><span class="ant-bloque-titulo-chevron" id="chevron-tramites">▲</span>
+    </div>
+    <div id="contenido-tramites">
+    <div class="ant-tramite-bloque" id="ant-bloque-1">
+      <div class="ant-tramite-num">
+        <span>Tramite 1</span>
+      </div>
+      <div class="ant-tram-wrap">
+        <input type="text" class="ant-tram-input" id="ant-tramite-1" placeholder="Escribe para filtrar tramites..." autocomplete="off" disabled>
+        <div class="ant-tram-lista" id="ant-tram-lista-1"></div>
+      </div>
+      <div class="ant-tarifa-precio-inline" id="ant-precio-1"></div>
+    </div>
+    <div class="ant-tramite-bloque" id="ant-bloque-2" style="display:none">
+      <div class="ant-tramite-num">
+        <span>Tramite 2</span>
+        <button class="ant-tramite-x" id="ant-x-2" onclick="antEliminarTramite(2)" title="Eliminar">✕</button>
+      </div>
+      <div class="ant-tram-wrap">
+        <input type="text" class="ant-tram-input" id="ant-tramite-2" placeholder="Escribe para filtrar tramites..." autocomplete="off" disabled>
+        <div class="ant-tram-lista" id="ant-tram-lista-2"></div>
+      </div>
+      <div class="ant-tarifa-precio-inline" id="ant-precio-2"></div>
+    </div>
+    <div class="ant-tramite-bloque" id="ant-bloque-3" style="display:none">
+      <div class="ant-tramite-num">
+        <span>Tramite 3</span>
+        <button class="ant-tramite-x" id="ant-x-3" onclick="antEliminarTramite(3)" title="Eliminar">✕</button>
+      </div>
+      <div class="ant-tram-wrap">
+        <input type="text" class="ant-tram-input" id="ant-tramite-3" placeholder="Escribe para filtrar tramites..." autocomplete="off" disabled>
+        <div class="ant-tram-lista" id="ant-tram-lista-3"></div>
+      </div>
+      <div class="ant-tarifa-precio-inline" id="ant-precio-3"></div>
+    </div>
+    </div>
+  </div>
 
+  <!-- BLOQUE 5 — LIQUIDACION -->
+  <div class="ant-card-liq" id="bloque-liq" style="display:none">
+    <div class="ant-bloque-titulo" style="cursor:pointer;" onclick="antToggleBloque('liq')">
+      <span class="ant-bloque-titulo-left"></span><span class="ant-bloque-titulo-texto" id="titulo-liq">PASO 6 — LIQUIDACION</span><span class="ant-bloque-titulo-chevron" id="chevron-liq">▲</span>
+    </div>
+    <div id="contenido-liq">
+    <div id="liq-row-tramite1" class="ant-liq-item" style="display:none"><span class="ant-liq-nombre" id="liq-label-tramite1">Tramite 1</span><input class="ant-liq-input" id="liq-tramite1" type="text" value="0" inputmode="numeric"></div>
+    <div id="liq-row-tramite2" class="ant-liq-item" style="display:none"><span class="ant-liq-nombre" id="liq-label-tramite2">Tramite 2</span><input class="ant-liq-input" id="liq-tramite2" type="text" value="0" inputmode="numeric"></div>
+    <div id="liq-row-tramite3" class="ant-liq-item" style="display:none"><span class="ant-liq-nombre" id="liq-label-tramite3">Tramite 3</span><input class="ant-liq-input" id="liq-tramite3" type="text" value="0" inputmode="numeric"></div>
+    <div id="liq-row-retefuente" class="ant-liq-item" style="display:none"><span class="ant-liq-nombre">Retefuente (1% avaluo)</span><input class="ant-liq-input" id="liq-retefuente" type="text" value="0" inputmode="numeric"></div>
+    <div id="liq-row-depto" class="ant-liq-item" style="display:none"><span class="ant-liq-nombre">Impuesto Departamental</span><input class="ant-liq-input" id="liq-depto" type="text" value="0" inputmode="numeric"></div>
+    <div id="liq-row-municipal" class="ant-liq-item" style="display:none"><span class="ant-liq-nombre">Impuesto Municipal</span><input class="ant-liq-input" id="liq-municipal" type="text" value="0" inputmode="numeric"></div>
+    <div id="liq-row-pazsalvo" class="ant-liq-item" style="display:none"><span class="ant-liq-nombre">Paz y Salvo</span><input class="ant-liq-input" id="liq-pazsalvo" type="text" value="6.000" inputmode="numeric"></div>
+    <div id="liq-row-envios" class="ant-liq-item" style="display:none"><span class="ant-liq-nombre">Envios y/o Domicilios</span><input class="ant-liq-input" id="liq-envios" type="text" value="18.000" inputmode="numeric"></div>
+    <div id="liq-row-honorarios" class="ant-liq-item" style="display:grid"><span class="ant-liq-nombre">Honorarios</span><input class="ant-liq-input" id="liq-honorarios" type="text" value="0" inputmode="numeric"></div>
+    <!-- Otros Cobros dinámicos -->
+    <div id="liq-cobros-wrap">
+      <div class="ant-liq-cobro" id="liq-cobro-1">
+        <input class="ant-liq-cobro-nombre" id="liq-cobro-nombre-1" type="text" placeholder="Concepto (ej: Certificado)">
+        <input class="ant-liq-input" id="liq-cobro-valor-1" type="text" value="0" inputmode="numeric">
+        <button class="ant-liq-btn-add" onclick="antAgregarCobro()" id="liq-cobro-add-btn" title="Agregar otro cobro">+</button>
+      </div>
+    </div>
 
-def resolver_recaptcha_2captcha(site_key, page_url):
-    resp = requests.post("https://2captcha.com/in.php", data={
-        "key": TWOCAPTCHA_API_KEY, "method": "userrecaptcha",
-        "googlekey": site_key, "pageurl": page_url, "json": 1,
-    }, timeout=15)
-    data = resp.json()
-    if data.get("status") != 1:
-        raise Exception(f"2captcha error: {data.get('request')}")
-    captcha_id = data["request"]
-    for _ in range(24):
-        time.sleep(5)
-        resultado = requests.get("https://2captcha.com/res.php", params={
-            "key": TWOCAPTCHA_API_KEY, "action": "get", "id": captcha_id, "json": 1,
-        }, timeout=10).json()
-        if resultado.get("status") == 1:
-            return resultado["request"]
-        if resultado.get("request") not in ("CAPCHA_NOT_READY", "CAPTCHA_NOT_READY"):
-            raise Exception(f"2captcha error: {resultado.get('request')}")
-    raise Exception("2captcha tardo demasiado.")
+    <div class="ant-liq-total"><span>TOTAL</span><span id="liq-total">$ 0</span></div>
+    <p class="ant-liq-nota">Todos los valores son editables. El total se actualiza automaticamente.</p>
+    <button class="ant-btn ant-btn-wa" id="ant-btn-wa" onclick="antEnviarWA()">📲 Generar y Enviar por WhatsApp</button>
+    <div class="ant-wa-preview" id="ant-wa-preview"><img id="ant-wa-img" src="" alt="Vista previa liquidacion"></div>
+    <canvas id="ant-canvas-liq" style="display:none"></canvas>
+    </div>
+  </div>
 
+</div>
 
-def resolver_turnstile_2captcha(site_key, page_url):
-    resp = requests.post("https://2captcha.com/in.php", data={
-        "key": TWOCAPTCHA_API_KEY, "method": "turnstile",
-        "sitekey": site_key, "pageurl": page_url, "json": 1,
-    }, timeout=15)
-    data = resp.json()
-    if data.get("status") != 1:
-        raise Exception(f"2captcha error: {data.get('request')}")
-    captcha_id = data["request"]
-    for _ in range(24):
-        time.sleep(5)
-        resultado = requests.get("https://2captcha.com/res.php", params={
-            "key": TWOCAPTCHA_API_KEY, "action": "get", "id": captcha_id, "json": 1,
-        }, timeout=10).json()
-        if resultado.get("status") == 1:
-            return resultado["request"]
-        if resultado.get("request") not in ("CAPCHA_NOT_READY", "CAPTCHA_NOT_READY"):
-            raise Exception(f"2captcha error: {resultado.get('request')}")
-    raise Exception("2captcha tardo demasiado.")
+<!-- Botón flotante de reporte -->
+<button class="ant-reporte-btn" onclick="antToggleReporte()">⚠️ Algo no está bien</button>
+<div class="ant-reporte-panel" id="ant-reporte-panel">
+  <div class="ant-reporte-titulo">¿Qué está pasando?</div>
+  <div class="ant-reporte-opciones">
+    <div class="ant-reporte-opcion" onclick="antSelOpcion(this,'Dato incorrecto')">Dato incorrecto</div>
+    <div class="ant-reporte-opcion" onclick="antSelOpcion(this,'Precio errado')">Precio errado</div>
+    <div class="ant-reporte-opcion" onclick="antSelOpcion(this,'No cargó')">No cargó</div>
+    <div class="ant-reporte-opcion" onclick="antSelOpcion(this,'Error en consulta')">Error en consulta</div>
+    <div class="ant-reporte-opcion" onclick="antSelOpcion(this,'Otro')">Otro</div>
+  </div>
+  <textarea class="ant-reporte-textarea" id="ant-reporte-texto" rows="3" placeholder="Cuéntanos más (opcional)..."></textarea>
+  <button class="ant-reporte-enviar" onclick="antEnviarReporte()">Enviar reporte</button>
+  <div class="ant-reporte-ok" id="ant-reporte-ok">✓ Gracias, lo revisaremos pronto.</div>
+</div>
 
+<script>
+(function() {
+  var ANT_MUNICIPIOS = [
+    "ANDES","APARTADO","BARBOSA","BELLO","CALDAS","CAREPA","CHIGORODO",
+    "EL CARMEN DE VIBORAL","CAUCASIA","CIUDAD BOLIVAR","COPACABANA","DEPARTAMENTAL",
+    "DONMATIAS","ENVIGADO","FRONTINO","GIRARDOTA","GUARNE","ITAGUI","LA CEJA",
+    "LA ESTRELLA","LA UNION","MARINILLA","MEDELLIN","PUERTO BERRIO","RIONEGRO",
+    "SABANETA","SANTA FE DE ANTIOQUIA","SANTA ROSA DE OSOS","SONSON","TURBO",
+    "URRAO","YARUMAL"
+  ];
 
-# ============================================================
-#  JOBS — CONSULTAS ASINCRONAS
-# ============================================================
+  var MUNICIPIOS_MUNICIPALES = {
+    "ENVIGADO":"envigado","SABANETA":"sabaneta","BELLO":"bello",
+    "LA ESTRELLA":"la estrella","ITAGUI":"itagui"
+  };
 
-def job_crear(job_id):
-    try:
-        conn = get_db_conn()
-        cur  = conn.cursor()
-        cur.execute("""
-            INSERT INTO consulta_jobs (job_id, estado, mensaje)
-            VALUES (%s, 'procesando', 'Iniciando consulta...')
-            ON CONFLICT (job_id) DO UPDATE SET estado='procesando', mensaje='Iniciando consulta...', actualizado_en=NOW()
-        """, (job_id,))
-        conn.commit()
-        cur.close(); conn.close()
-    except Exception as e:
-        print(f"Error creando job: {e}")
+  // Municipios que muestran mensaje de oficina en impuesto municipal
+  var MUNICIPIOS_OFICINA_SIEMPRE = ["CALDAS","BARBOSA"];
+  var MUNICIPIOS_OFICINA_PUBLICO = ["RIONEGRO","SANTA ROSA DE OSOS","MEDELLIN","SANTA FE DE ANTIOQUIA"];
 
-def job_actualizar(job_id, mensaje, estado='procesando'):
-    try:
-        conn = get_db_conn()
-        cur  = conn.cursor()
-        cur.execute("""
-            UPDATE consulta_jobs SET mensaje=%s, estado=%s, actualizado_en=NOW()
-            WHERE job_id=%s
-        """, (mensaje, estado, job_id))
-        conn.commit()
-        cur.close(); conn.close()
-    except Exception as e:
-        print(f"Error actualizando job: {e}")
+  function debeMostrarMensajeOficina() {
+    var municipio = antMunicipioActual.toUpperCase();
+    var serv      = (document.getElementById('ant-servicio').value || '').trim().toUpperCase();
+    if (MUNICIPIOS_OFICINA_SIEMPRE.indexOf(municipio) >= 0) return true;
+    if (MUNICIPIOS_OFICINA_PUBLICO.indexOf(municipio) >= 0 && serv === 'PUBLICO') return true;
+    return false;
+  }
 
-def job_terminar(job_id, resultado):
-    try:
-        conn = get_db_conn()
-        cur  = conn.cursor()
-        cur.execute("""
-            UPDATE consulta_jobs SET estado='listo', mensaje='Consulta finalizada.', resultado=%s, actualizado_en=NOW()
-            WHERE job_id=%s
-        """, (json.dumps(resultado), job_id))
-        conn.commit()
-        cur.close(); conn.close()
-    except Exception as e:
-        print(f"Error terminando job: {e}")
+  var CLASE_A_TIPO = {
+    'AUTOMOVIL':'CARRO','CAMPERO':'CARRO','CAMIONETA':'CARRO','VOLQUETA':'CARRO',
+    'CAMION':'CARRO','BUS':'CARRO','BUSETA':'CARRO',
+    'MOTOCICLETA':'MOTO','MOTO':'MOTO',
+    'MOTOCARRO':'MOTOCARRO','TRICIMOTO':'MOTOCARRO'
+  };
 
-def job_error(job_id, mensaje_error):
-    try:
-        conn = get_db_conn()
-        cur  = conn.cursor()
-        cur.execute("""
-            UPDATE consulta_jobs SET estado='error', mensaje=%s, actualizado_en=NOW()
-            WHERE job_id=%s
-        """, (mensaje_error, job_id))
-        conn.commit()
-        cur.close(); conn.close()
-    except Exception as e:
-        print(f"Error marcando job como error: {e}")
+  var ANT_API           = 'https://consulta-impuestos-production.up.railway.app';
+  var antDatosOCR       = null;
+  var antIdxActivo      = -1;
+  var cacheTramites     = {};
+  var antAvaluo         = 0;
+  var ocrLeido          = false;
+  var modoEntrada       = 'ocr';
+  var tramiteOpciones   = [];
+  var antMunicipioActual = ''; // municipio seleccionado, guardado en variable JS
 
+  // ── TABLA DE AUTENTICACION POR MUNICIPIO ─────────────────────────────────
+  var AUTENTICACION = {
+    "MEDELLIN": {
+      traspaso:  { propietario: ["mandato"] },
+      otro:      { propietario: ["mandato"] }
+    },
+    "ENVIGADO": {
+      traspaso:  { propietario: ["cualquier documento"] },
+      otro:      { propietario: ["cualquier documento"] }
+    },
+    "BELLO": {
+      traspaso:  { propietario: ["cualquier documento"] },
+      otro:      { propietario: ["cualquier documento"] }
+    },
+    "ITAGUI": {
+      traspaso:  { propietario: ["contrato de compraventa"] },
+      otro:      { propietario: ["formulario"] }
+    },
+    "LA CEJA": {
+      traspaso:  { propietario: [], nota_especial: "No requiere autenticación. Revisan firma del propietario en el RUNT." },
+      otro:      { propietario: [], nota_especial: "No requiere autenticación. Revisan firma del propietario en el RUNT." }
+    },
+    "COPACABANA": {
+      traspaso:  { propietario: ["mandato", "contrato de compraventa"], comprador: ["mandato"] },
+      otro:      { propietario: ["mandato", "formulario"] }
+    },
+    "DEPARTAMENTAL": {
+      traspaso:  { propietario: ["contrato de compraventa"] },
+      otro:      { propietario: ["formulario"] }
+    },
+    "GIRARDOTA": {
+      traspaso:  { propietario: ["contrato de compraventa"] },
+      otro:      { propietario: ["formulario"] }
+    },
+    "LA ESTRELLA": {
+      traspaso:  { propietario: ["contrato de compraventa"] },
+      otro:      { propietario: ["formulario"] }
+    },
+    "MARINILLA": {
+      traspaso:  { propietario: ["mandato"] },
+      otro:      { propietario: ["mandato"] }
+    },
+    "RIONEGRO": {
+      traspaso:  { propietario: ["contrato de compraventa"] },
+      otro:      { propietario: ["formulario"] }
+    },
+    "SABANETA": {
+      traspaso:  { propietario: ["contrato de compraventa"] },
+      otro:      { propietario: ["formulario"] }
+    },
+    "SANTA FE DE ANTIOQUIA": {
+      traspaso:  { propietario: ["mandato"], nota_especial: "Si la firma es diferente a la cédula, debe autenticar todos los documentos." },
+      otro:      { propietario: ["mandato"], nota_especial: "Si la firma es diferente a la cédula, debe autenticar todos los documentos." }
+    }
+  };
 
-# ============================================================
-#  MUNICIPIOS (sin tocar)
-# ============================================================
-def consultar_envigado(page, placa):
-    url = "https://movilidad.envigado.gov.co/portal-servicios/#/impuesto-local"
-    page.goto(url, wait_until="domcontentloaded")
-    page.get_by_role("textbox", name="Placa").fill(placa)
-    page.get_by_role("button", name="Buscar").click()
-    page.wait_for_function("""() => {
-        const tabla = document.querySelector('#tablaCollapseVigencias');
-        const noMatriculado = document.body.innerText.includes('El vehiculo no se encuentra matriculado en la Secretaria de Movilidad');
-        return tabla || noMatriculado;
-    }""", timeout=TIMEOUT)
-    if page.get_by_text(MSG_NO_MATRICULADO).is_visible():
-        return [], 0
-    if page.locator("#selectall").is_visible():
-        page.locator("#selectall").check()
-    registros = []
-    filas = page.locator("#tablaCollapseVigencias tr").all()
-    for fila in filas:
-        texto_fila = fila.inner_text().strip()
-        if not texto_fila:
-            continue
-        año = re.search(r'\b(20\d{2})\b', texto_fila)
-        montos = re.findall(r'\$\s*[\d.]+', texto_fila)
-        if año and montos:
-            valor_str = montos[-1].replace('$', '').replace(' ', '').replace('.', '')
-            try:
-                registros.append({'vigencia': año.group(), 'estado': 'Pendiente de pago', 'total_vigencia': int(valor_str)})
-            except ValueError:
-                pass
-    total = sum(r['total_vigencia'] for r in registros)
-    return registros, total
+  function generarNotaAutenticacion() {
+    var municipio = antMunicipioActual.toUpperCase();
+    var reglas    = AUTENTICACION[municipio];
+    if (!reglas) return null;
 
+    // Detectar si hay al menos un traspaso entre los tramites seleccionados
+    var hayTraspaso = [1,2,3].some(function(n) {
+      var v = (document.getElementById('ant-tramite-'+n).value || '').toUpperCase();
+      return v.includes('TRASPASO');
+    });
 
-def consultar_sabaneta(page, placa):
-    url = "https://transitosabaneta.utsetsa.com/#/impuesto-local"
-    page.goto(url, wait_until="domcontentloaded", timeout=30000)
-    page.locator("#placa").wait_for(state="visible", timeout=15000)
-    page.locator("#placa").fill(placa)
-    page.get_by_role("button", name="Buscar").click()
-    page.wait_for_timeout(20000)
-    texto_pagina = page.inner_text("body")
-    if MSG_NO_MATRICULADO in texto_pagina:
-        return [], 0
-    if 'Último pago realizado' in texto_pagina and 'Vigencias pendientes' not in texto_pagina:
-        return [], 0
-    if 'Vigencias pendientes' not in texto_pagina:
-        return [], 0
-    page.locator("#tablaCollapseVigencias").wait_for(state="visible", timeout=15000)
-    checkbox = page.locator("#selectall")
-    checkbox.wait_for(state="visible", timeout=15000)
-    if checkbox.is_enabled():
-        checkbox.check()
-    page.wait_for_timeout(5000)
-    spans_cop = page.locator("span.fs-16.ng-binding").all()
-    total = 0
-    for span in spans_cop[::-1]:
-        texto = span.inner_text().strip()
-        if "COP" in texto and texto != "COP 0":
-            valor_str = texto.replace("COP", "").replace(".", "").strip()
-            try:
-                total = int(valor_str)
-                break
-            except ValueError:
-                pass
-    registros = []
-    filas = page.locator("#tablaCollapseVigencias tr").all()
-    for fila in filas:
-        texto_fila = fila.inner_text().strip()
-        if not texto_fila:
-            continue
-        año = re.search(r'\b(20\d{2})\b', texto_fila)
-        montos = re.findall(r'COP\s*[\d.]+', texto_fila)
-        if año and montos:
-            valor_fila = montos[-1].replace('COP', '').replace(' ', '').replace('.', '')
-            try:
-                registros.append({'vigencia': año.group(), 'estado': 'Pendiente de pago', 'total_vigencia': int(valor_fila)})
-            except ValueError:
-                pass
-    return registros, total
+    var regla = hayTraspaso ? reglas.traspaso : reglas.otro;
+    if (!regla) return null;
 
+    var lineas = [];
 
-def consultar_itagui(page, placa):
-    url = "https://movilidad.transitoitagui.gov.co/portal-servicios/#/impuesto-local"
-    page.goto(url, wait_until="domcontentloaded")
-    page.get_by_role("textbox", name="Placa").fill(placa)
-    page.get_by_role("button", name="Buscar").click()
-    page.wait_for_function("""() => {
-        const texto = document.body.innerText;
-        const noMatriculado = texto.includes('El vehiculo no se encuentra matriculado en la Secretaria de Movilidad');
-        const conDeuda = texto.includes('Vigencias pendientes');
-        const pazYSalvo = texto.includes('Último pago realizado') && !texto.includes('Vigencias pendientes');
-        return noMatriculado || conDeuda || pazYSalvo;
-    }""", timeout=20000)
-    texto_pagina = page.inner_text("body")
-    if MSG_NO_MATRICULADO in texto_pagina:
-        return [], 0
-    if 'Vigencias pendientes' not in texto_pagina and AÑO_ACTUAL in texto_pagina:
-        return [], 0
-    page.locator("#tablaCollapseVigencias").wait_for(state="visible", timeout=15000)
-    checkbox = page.locator("#selectall")
-    checkbox.wait_for(state="visible", timeout=15000)
-    if checkbox.is_enabled():
-        checkbox.check()
-    page.wait_for_timeout(3000)
-    spans_cop = page.locator("span.fs-16.ng-binding").all()
-    total = 0
-    for span in spans_cop[::-1]:
-        texto = span.inner_text().strip()
-        if "COP" in texto and texto != "COP 0":
-            valor_str = texto.replace("COP", "").replace(".", "").strip()
-            try:
-                total = int(valor_str)
-                break
-            except ValueError:
-                pass
-    registros = []
-    filas = page.locator("#tablaCollapseVigencias tr").all()
-    for fila in filas:
-        texto_fila = fila.inner_text().strip()
-        if not texto_fila:
-            continue
-        año = re.search(r'\b(20\d{2})\b', texto_fila)
-        montos = re.findall(r'COP\s*[\d.]+', texto_fila)
-        if año and montos:
-            valor_fila = montos[-1].replace('COP', '').replace(' ', '').replace('.', '')
-            try:
-                registros.append({'vigencia': año.group(), 'estado': 'Pendiente de pago', 'total_vigencia': int(valor_fila)})
-            except ValueError:
-                pass
-    return registros, total
+    // Documentos del propietario
+    if (regla.propietario && regla.propietario.length > 0) {
+      lineas.push('El propietario debe autenticar: ' + regla.propietario.join(' + ').toUpperCase());
+    }
 
+    // Documentos del comprador (solo Copacabana traspaso)
+    if (regla.comprador && regla.comprador.length > 0) {
+      lineas.push('El comprador debe autenticar: ' + regla.comprador.join(' + ').toUpperCase());
+    }
 
-def consultar_bello(page, placa):
-    url = "https://serviciosdigitales.movilidadavanzadabello.com.co/portal-servicios/#/public"
-    page.goto(url, wait_until="domcontentloaded", timeout=60000)
-    page.wait_for_function("""() => { return document.querySelectorAll('input[type="search"]').length > 0; }""", timeout=30000)
-    try:
-        page.get_by_role("button", name="Close").click(timeout=5000)
-    except:
-        pass
-    page.get_by_role("searchbox", name="Placa").nth(3).fill(placa)
-    page.get_by_role("button").nth(5).click()
-    try:
-        page.wait_for_url("**/impuesto-local", timeout=15000)
-    except:
-        return [], 0
-    page.wait_for_timeout(10000)
-    texto_pagina = page.inner_text("body")
-    if 'paz y salvo' in texto_pagina or 'No se encontraron registros' in texto_pagina:
-        return [], 0
-    if 'Vigencias pendientes' not in texto_pagina:
-        return [], 0
-    registros = []
-    tbodies = page.locator("tbody").all()
-    for tbody in tbodies[::2]:
-        texto = tbody.inner_text().strip()
-        if not texto:
-            continue
-        año = re.search(r'\b(20\d{2})\b', texto)
-        montos = re.findall(r'COP\s*[\d.]+', texto)
-        if año and montos:
-            valor_fila = montos[-1].replace('COP', '').replace(' ', '').replace('.', '')
-            try:
-                registros.append({'vigencia': año.group(), 'estado': 'Pendiente de pago' if 'Pendiente' in texto else 'Desconocido', 'total_vigencia': int(valor_fila)})
-            except ValueError:
-                pass
-    match_total = re.search(r'Total a pagar:\s*COP\s*([\d.]+)', texto_pagina)
-    total = int(match_total.group(1).replace('.', '')) if match_total else sum(r['total_vigencia'] for r in registros)
-    return registros, total
+    // Nota especial si existe
+    if (regla.nota_especial) {
+      lineas.push(regla.nota_especial);
+    }
 
+    if (lineas.length === 0) return null;
+    return 'NOTA (' + antMunicipioActual + '): ' + lineas.join(' | ');
+  }
 
-def _parsear_emtrasur(data):
-    registros = []
-    for r in data:
-        registros.append({
-            "vigencia": str(r.get("AnioNoFacturado", "")),
-            "estado": "Pendiente de pago",
-            "total_vigencia": r.get("ValorPorFacturar", 0),
-            "tipo_vehiculo": r.get("TipoVehiculo", ""),
-            "ultimo_pago": r.get("AnioPagado", ""),
-            "descripcion": r.get("DescripcionNoFacturada", "").strip(),
-        })
-    total = sum(r["total_vigencia"] for r in registros)
-    return registros, total
+  // ── MODO ENTRADA ─────────────────────────────────────────────────────────
 
+  function actualizarColorPlaca() {
+    var serv  = (document.getElementById('ant-servicio').value || '').trim().toUpperCase();
+    var placa = document.getElementById('ant-placa-letras').closest('div[style*="background"]');
+    if (!placa) return;
+    if (serv === 'PUBLICO') {
+      placa.style.background = '#FFFFFF';
+    } else {
+      placa.style.background = '#FDD835';
+    }
+  }
 
-def consultar_laestrella(page, placa):
-    token = resolver_recaptcha_2captcha(EMTRASUR_SITE_KEY, EMTRASUR_URL)
-    api_url = f"https://sistematizacion.emtrasur.com.co/api/Sistematizacion/{placa}"
-    resp = requests.get(api_url, headers={
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
-        "Accept": "application/json, text/plain, */*",
-        "Referer": EMTRASUR_URL,
-        "Origin": "https://sistematizacion.emtrasur.com.co",
-        "X-Captcha-Token": token,
-    }, timeout=15)
-    if resp.status_code == 200:
-        data = resp.json()
-        if data.get("Success"):
-            return _parsear_emtrasur(data.get("Data", []))
-    raise Exception(f"EMTRASUR respondio {resp.status_code}: {resp.text[:200]}")
+  window.antModoEntrada = function(modo) {
+    modoEntrada = modo;
+    // Marcar botón activo
+    ['btn-entrada-camara','btn-entrada-ocr','btn-entrada-manual'].forEach(function(id) {
+      document.getElementById(id).classList.remove('activo');
+    });
+    document.getElementById('btn-entrada-'+modo).classList.add('activo');
 
+    // Mostrar u ocultar zona OCR
+    document.getElementById('ant-zona-ocr').style.display = modo !== 'manual' ? 'block' : 'none';
 
-# ============================================================
-#  ANTIOQUIA — MÓDULO NUEVO
-# ============================================================
-def _calcular_digito_nit(nit):
-    """Calcula el dígito de verificación de un NIT colombiano (algoritmo DIAN)."""
-    factores = [3, 7, 13, 17, 19, 23, 29, 37, 41, 43]
-    n = str(nit).strip().replace("-", "").replace(".", "").zfill(10)
-    suma = sum(int(n[::-1][i]) * factores[i] for i in range(10))
-    r = suma % 11
-    return 0 if r == 0 else (1 if r == 1 else 11 - r)
+    if (modo === 'ocr') {
+      // Mostrar zona de arrastre limpia aunque haya datos previos
+      document.getElementById('ant-ocr-zone').style.display = 'block';
+      document.getElementById('ant-preview-wrap').style.display = 'none';
+      document.getElementById('ant-ocr-status').style.display = 'none';
+      // Colapsar todos los bloques
+      ocultarTodo();
+    } else if (modo === 'camara') {
+      // Abrir cámara directamente — zona OCR sigue visible para ver preview
+      document.getElementById('ant-ocr-zone').style.display = 'block';
+      document.getElementById('ant-preview-wrap').style.display = 'none';
+      document.getElementById('ant-camara-file').click();
+      // Colapsar todos los bloques
+      ocultarTodo();
+    } else if (modo === 'manual') {
+      limpiarCampos();
+      ocrLeido = true;
+      document.getElementById('ant-bienvenida').style.display = 'none';
+      document.getElementById('ant-municipio-wrap').style.display = 'block';
+      document.getElementById('ant-mun-confirm').style.display = 'none';
+      document.getElementById('ant-mun-label').style.display = 'block';
+      document.getElementById('ant-mun-campo').style.display = 'block';
+      actualizarVisibilidad();
+    }
+  };
 
+  // ── LIQUIDACION ──────────────────────────────────────────────────────────
 
-def _sesion_antioquia(placa, identificacion, tipo_documento_id,
-                      modelo, organismo_transito, apellidos_propietario):
-    """
-    Abre sesión completa en Antioquia y retorna (session, token_cuestionario, data3).
-    Costo: 2 Turnstiles.
-    """
-    try:
-        token_captcha = resolver_turnstile_2captcha(ANTIOQUIA_SITE_KEY, ANTIOQUIA_URL)
-    except Exception as e:
-        raise Exception(f"Error resolviendo captcha inicial: {e}")
+  var LIQ_IDS = ['liq-tramite1','liq-tramite2','liq-tramite3','liq-retefuente',
+                 'liq-depto','liq-municipal','liq-pazsalvo','liq-envios',
+                 'liq-honorarios'];
+  var antCobrosCount = 1; // cuántos cobros extra hay actualmente
 
-    session = requests.Session()
-    session.headers.update({
-        "Accept": "*/*",
-        "Content-Type": "application/json",
-        "captcha": token_captcha,
-        "Referer": "https://www.vehiculosantioquia.com.co/impuestosweb/",
-        "X-Requested-With": "XMLHttpRequest",
-        "User-Agent": "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Mobile Safari/537.36",
-    })
+  function parseLiq(id) {
+    return parseInt((document.getElementById(id).value||'0').replace(/\D/g,''),10)||0;
+  }
 
-    r1 = session.post(
-        f"{ANTIOQUIA_API}/ConsultarEstadoCuentaImpAntioquia/obtenerCuestionarioEstadoCuenta",
-        json={"placa": placa, "idTipoIdentificacion": tipo_documento_id, "identificacion": identificacion},
-        timeout=60
-    )
-    data1 = r1.json()
-    referencia = data1.get("referencia")
+  function calcularTotal() {
+    var total = LIQ_IDS.reduce(function(s,id){ return s+parseLiq(id); },0);
+    // Sumar cobros dinámicos
+    for (var i = 1; i <= antCobrosCount; i++) {
+      var el = document.getElementById('liq-cobro-valor-'+i);
+      if (el) total += parseInt((el.value||'0').replace(/\D/g,''),10)||0;
+    }
+    document.getElementById('liq-total').textContent = '$ '+total.toLocaleString('es-CO');
+  }
 
-    opciones_nombre = data1.get("preguntaNombrePropietario", {}).get("opcionesPregunta", [])
-    nombre_encontrado = next(
-        (n for n in opciones_nombre if apellidos_propietario.upper() in n.upper()), None
-    )
-    if not nombre_encontrado:
-        raise Exception(f"No se encontró propietario con apellidos '{apellidos_propietario}'. Opciones: {opciones_nombre}")
+  window.antAgregarCobro = function() {
+    if (antCobrosCount >= 3) return; // máximo 3
+    antCobrosCount++;
+    var wrap = document.getElementById('liq-cobros-wrap');
 
-    r2 = session.post(
-        f"{ANTIOQUIA_API}/ConsultarEstadoCuentaImpAntioquia/validarCuestionarioEstadoCuenta",
-        json={
-            "placa": placa, "tipoDocumento": tipo_documento_id, "numeroDocumento": identificacion,
-            "idEstadoCuenta": referencia,
-            "respuestas": {
-                "respuestaModelo": modelo,
-                "respuestaOrganismoTransito": organismo_transito,
-                "respuestaNombrePropietario": nombre_encontrado
+    // Ocultar botón + del cobro anterior y agregar botón - en su lugar
+    var btnAdd = document.getElementById('liq-cobro-add-btn');
+    if (btnAdd) {
+      btnAdd.id = 'liq-cobro-del-btn-'+(antCobrosCount-1);
+      btnAdd.className = 'ant-liq-btn-del';
+      btnAdd.title = 'Eliminar';
+      btnAdd.textContent = '×';
+      btnAdd.onclick = (function(n){ return function(){ antEliminarCobro(n); }; })(antCobrosCount-1);
+    }
+
+    var div = document.createElement('div');
+    div.className = 'ant-liq-cobro';
+    div.id = 'liq-cobro-'+antCobrosCount;
+    div.innerHTML =
+      '<input class="ant-liq-cobro-nombre" id="liq-cobro-nombre-'+antCobrosCount+'" type="text" placeholder="Concepto (ej: Certificado)">' +
+      '<input class="ant-liq-input" id="liq-cobro-valor-'+antCobrosCount+'" type="text" value="0" inputmode="numeric">' +
+      (antCobrosCount < 3
+        ? '<button class="ant-liq-btn-add" id="liq-cobro-add-btn" onclick="antAgregarCobro()" title="Agregar otro cobro">+</button>'
+        : '<button class="ant-liq-btn-del" onclick="antEliminarCobro('+antCobrosCount+')" title="Eliminar">×</button>');
+    wrap.appendChild(div);
+
+    // Listener para recalcular
+    document.getElementById('liq-cobro-valor-'+antCobrosCount).addEventListener('input', calcularTotal);
+  };
+
+  window.antEliminarCobro = function(n) {
+    var div = document.getElementById('liq-cobro-'+n);
+    if (div) div.remove();
+    antCobrosCount--;
+
+    // Restaurar botón + en el último cobro restante
+    var wrap = document.getElementById('liq-cobros-wrap');
+    var cobros = wrap.querySelectorAll('.ant-liq-cobro');
+    if (cobros.length > 0) {
+      var ultimo = cobros[cobros.length-1];
+      var delBtn = ultimo.querySelector('.ant-liq-btn-del');
+      if (delBtn && antCobrosCount < 3) {
+        delBtn.id = 'liq-cobro-add-btn';
+        delBtn.className = 'ant-liq-btn-add';
+        delBtn.title = 'Agregar otro cobro';
+        delBtn.textContent = '+';
+        delBtn.onclick = antAgregarCobro;
+      }
+    }
+    calcularTotal();
+  };
+
+  function setLiq(id, valor) {
+    var el = document.getElementById(id);
+    if (el) el.value = Math.round(valor).toLocaleString('es-CO');
+    var rowId = 'liq-row-'+id.replace('liq-','');
+    var row = document.getElementById(rowId);
+    if (row) row.style.display = valor > 0 ? 'grid' : 'none';
+    calcularTotal();
+  }
+
+  function mostrarFilasDefecto() {
+    var municipio  = document.getElementById('ant-municipio').value;
+    var tieneDepto = ANT_MUNICIPIOS.indexOf(municipio) >= 0;
+    var exentoLiq  = exentoDepto();
+    if (tieneDepto && !exentoLiq) {
+      document.getElementById('liq-row-pazsalvo').style.display = 'grid';
+    }
+    document.getElementById('liq-row-envios').style.display = 'grid';
+    // Honorarios siempre visible
+    document.getElementById('liq-row-honorarios').style.display = 'grid';
+    calcularTotal();
+  }
+
+  function limpiarLiq() {
+    LIQ_IDS.forEach(function(id) { document.getElementById(id).value = '0'; });
+    document.getElementById('liq-pazsalvo').value  = '6.000';
+    document.getElementById('liq-envios').value    = '18.000';
+    document.getElementById('liq-honorarios').value = '0';
+    ['tramite1','tramite2','tramite3','retefuente','depto','municipal',
+     'pazsalvo','envios'].forEach(function(k) {
+      var r = document.getElementById('liq-row-'+k);
+      if (r) r.style.display = 'none';
+    });
+    // Honorarios siempre visible
+    document.getElementById('liq-row-honorarios').style.display = 'grid';
+    // Resetear cobros dinámicos
+    var wrap = document.getElementById('liq-cobros-wrap');
+    if (wrap) {
+      wrap.innerHTML =
+        '<div class="ant-liq-cobro" id="liq-cobro-1">' +
+        '<input class="ant-liq-cobro-nombre" id="liq-cobro-nombre-1" type="text" placeholder="Concepto (ej: Certificado)">' +
+        '<input class="ant-liq-input" id="liq-cobro-valor-1" type="text" value="0" inputmode="numeric">' +
+        '<button class="ant-liq-btn-add" id="liq-cobro-add-btn" onclick="antAgregarCobro()" title="Agregar otro cobro">+</button>' +
+        '</div>';
+      antCobrosCount = 1;
+      document.getElementById('liq-cobro-valor-1').addEventListener('input', calcularTotal);
+    }
+    calcularTotal();
+  }
+
+  LIQ_IDS.forEach(function(id) {
+    var el = document.getElementById(id);
+    if (el) el.addEventListener('input', calcularTotal);
+  });
+  // Listener cobro inicial
+  var cobroInicial = document.getElementById('liq-cobro-valor-1');
+  if (cobroInicial) cobroInicial.addEventListener('input', calcularTotal);
+
+  // ── EXENCION ─────────────────────────────────────────────────────────────
+
+  function exentoDepto() {
+    var serv     = (document.getElementById('ant-servicio').value||'').trim().toUpperCase();
+    var cilStr   = (document.getElementById('ant-cilindrada').value||'').trim();
+    var cil      = cilStr ? parseInt(cilStr, 10) : 999; // si no hay dato, asumir no exento
+    var esPublico = serv === 'PUBLICO';
+    var esMoto125 = cilStr && cil > 0 && cil <= 125;
+    return esPublico || esMoto125;
+  }
+
+  // ── VISIBILIDAD DE BLOQUES ────────────────────────────────────────────────
+
+  var infoConfirmada = false;
+
+  function ocultarTodo() {
+    ['bloque-tramites','bloque-depto','bloque-municipal'].forEach(function(id) {
+      var bl = document.getElementById(id);
+      bl.classList.remove('visible');
+      bl.style.display = 'none';
+    });
+    document.getElementById('bloque-info').classList.remove('visible');
+    var blLiq = document.getElementById('bloque-liq');
+    blLiq.style.cssText = 'display:none !important';
+    var blRet = document.getElementById('bloque-retefuente');
+    if (blRet) { blRet.style.display = 'none'; blRet.classList.remove('visible'); }
+  }
+
+  function mostrarYExpandirBloques() {
+    var municipio  = antMunicipioActual.toUpperCase();
+    var tieneMun   = !!MUNICIPIOS_MUNICIPALES[municipio];
+    var tieneDepto = ANT_MUNICIPIOS.indexOf(municipio) >= 0;
+    var exento     = exentoDepto();
+    var tipodoc    = document.getElementById('ant-tipodoc').value;
+
+    // Departamental
+    if (tieneDepto && !exento) {
+      var blD = document.getElementById('bloque-depto');
+      blD.classList.add('visible'); blD.style.display = 'block';
+      var cD = document.getElementById('contenido-depto');
+      if (cD) cD.style.display = 'block';
+      var chD = document.getElementById('chevron-depto');
+      if (chD) chD.textContent = '▲';
+      document.getElementById('ant-btn-impuesto').style.display = 'flex';
+      document.getElementById('ant-no-depto').style.display = 'none';
+    }
+
+    // Municipal
+    if (tieneMun || debeMostrarMensajeOficina()) {
+      var blM = document.getElementById('bloque-municipal');
+      blM.classList.add('visible'); blM.style.display = 'block';
+      var cM = document.getElementById('contenido-municipal');
+      if (cM) cM.style.display = 'block';
+      var chM = document.getElementById('chevron-municipal');
+      if (chM) chM.textContent = '▲';
+      if (debeMostrarMensajeOficina()) {
+        document.getElementById('ant-btn-municipal').style.display = 'none';
+        document.getElementById('ant-result-municipal').innerHTML =
+          '<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:7px;padding:14px 16px;color:#856404;font-size:14px;font-weight:700;text-align:center;margin-top:8px;">⚠️ DEBES PREGUNTAR DIRECTAMENTE EN LA OFICINA DE MOVILIDAD</div>';
+      } else {
+        document.getElementById('ant-btn-municipal').style.display = 'flex';
+        document.getElementById('ant-result-municipal').innerHTML = '';
+      }
+    }
+
+    // Tramites
+    var blT = document.getElementById('bloque-tramites');
+    blT.classList.add('visible'); blT.style.display = 'block';
+    var cT = document.getElementById('contenido-tramites');
+    if (cT) cT.style.display = 'block';
+    var chT = document.getElementById('chevron-tramites');
+    if (chT) chT.textContent = '▲';
+
+    // Liquidacion
+    var blL = document.getElementById('bloque-liq');
+    blL.style.cssText = 'display:block !important';
+    var cL = document.getElementById('contenido-liq');
+    if (cL) cL.style.display = 'block';
+    var chL = document.getElementById('chevron-liq');
+    if (chL) chL.textContent = '▲';
+
+    // Retefuente (solo si no es NIT)
+    if (tipodoc !== 'NIT') {
+      var blR = document.getElementById('bloque-retefuente');
+      blR.classList.add('visible'); blR.style.display = 'block';
+      var cR = document.getElementById('contenido-ret');
+      if (cR) cR.style.display = 'block';
+      var chR = document.getElementById('chevron-ret');
+      if (chR) chR.textContent = '▲';
+      antCargarRetefuente();
+    }
+  }
+
+  function actualizarVisibilidad() {
+    var municipio = document.getElementById('ant-municipio').value;
+
+    if (!ocrLeido || !municipio) {
+      ocultarTodo();
+      return;
+    }
+
+    // Paso 2: mostrar solo informacion expandida
+    if (!infoConfirmada) {
+      ocultarTodo();
+      document.getElementById('bloque-info').classList.add('visible');
+      document.getElementById('ant-info-contenido').style.display = 'block';
+      document.getElementById('ant-info-colapsado').style.display = 'none';
+      document.getElementById('ant-info-chevron').textContent = '▲';
+    }
+    // Si ya confirmó, no hacer nada — antConfirmarInfo maneja el siguiente paso
+  }
+
+  // ── LIMPIEZA ─────────────────────────────────────────────────────────────
+
+  function limpiarCampos() {
+    ['ant-placa','ant-placa-edit','ant-modelo','ant-cedula','ant-apellidos',
+     'ant-clase','ant-servicio','ant-cilindrada','ant-carroceria','ant-municipio-info'].forEach(function(id) {
+      var el = document.getElementById(id); if(el) el.value = '';
+    });
+    document.getElementById('ant-placa-letras').textContent  = '---';
+    document.getElementById('ant-placa-numeros').textContent = '---';
+    actualizarColorPlaca();
+    ['ant-marca','ant-linea','ant-capacidad'].forEach(function(id) {
+      document.getElementById(id).value = '';
+    });
+    document.getElementById('ant-tipodoc').value         = 'CC';
+    document.getElementById('ant-municipio-input').value = '';
+    document.getElementById('ant-municipio').value       = '';
+    document.getElementById('ant-result-depto').innerHTML    = '';
+    document.getElementById('ant-result-municipal').innerHTML = '';
+    document.getElementById('ant-preview-wrap').style.display = 'none';
+    document.getElementById('ant-ocr-zone').style.display    = 'block';
+    document.getElementById('ant-ocr-status').style.display  = 'none';
+    document.getElementById('ant-wa-preview').style.display  = 'none';
+    ['bloque-info','bloque-tramites','bloque-depto','bloque-municipal'].forEach(function(id) {
+      document.getElementById(id).classList.remove('visible');
+    });
+    antDatosOCR = null; antAvaluo = 0; ocrLeido = false; infoConfirmada = false; antMunicipioActual = '';
+    antRetAvaluo = 0; antRetRetefuente = 0;
+    document.getElementById('ant-ret-estado').textContent   = '';
+    document.getElementById('ant-ret-opciones').innerHTML   = '';
+    document.getElementById('ant-ret-resultado').style.display = 'none';
+    var blRet = document.getElementById('bloque-retefuente');
+    if (blRet) { blRet.style.display = 'none'; blRet.classList.remove('visible'); }
+    document.getElementById('ant-bienvenida').style.display     = 'block';
+    document.getElementById('bloque-liq').style.display         = 'none';
+    document.getElementById('ant-municipio-wrap').style.display = 'none';
+    document.getElementById('ant-mun-confirm').style.display    = 'none';
+    document.getElementById('ant-mun-label').style.display      = 'none';
+    document.getElementById('ant-mun-campo').style.display      = 'none';
+    limpiarTramites();
+    limpiarLiq();
+  }
+
+  // ── TRAMITES CON AUTOCOMPLETE ─────────────────────────────────────────────
+
+  function getTipo() {
+    var clase = (document.getElementById('ant-clase').value||'').trim().toUpperCase();
+    return CLASE_A_TIPO[clase] || '';
+  }
+
+  function limpiarTramites() {
+    [1,2,3].forEach(function(n) {
+      var inp = document.getElementById('ant-tramite-'+n);
+      inp.value    = '';
+      inp.disabled = true;
+      document.getElementById('ant-tram-lista-'+n).style.display = 'none';
+      document.getElementById('ant-precio-'+n).style.display     = 'none';
+      if (n > 1) document.getElementById('ant-bloque-'+n).style.display = 'none';
+    });
+    tramiteOpciones = [];
+  }
+
+  function cargarTramites() {
+    var municipio = document.getElementById('ant-municipio').value;
+    var tipo      = getTipo();
+    if (!municipio || !tipo) { limpiarTramites(); return; }
+    var key = municipio+'|'+tipo;
+    if (cacheTramites[key]) {
+      tramiteOpciones = cacheTramites[key];
+      habilitarTramite(1);
+      return;
+    }
+    fetch(ANT_API+'/tramites/filtros?campo=tramite&municipio='+encodeURIComponent(municipio)+'&clase='+encodeURIComponent(tipo))
+      .then(function(r){return r.json();})
+      .then(function(data){
+        cacheTramites[key] = data.valores||[];
+        tramiteOpciones    = cacheTramites[key];
+        habilitarTramite(1);
+      })
+      .catch(function(){});
+  }
+
+  function habilitarTramite(n) {
+    var inp = document.getElementById('ant-tramite-'+n);
+    if (inp) inp.disabled = false;
+  }
+
+  function filtrarTramites(n, texto) {
+    var lista = document.getElementById('ant-tram-lista-'+n);
+    var filtro = texto.trim().toUpperCase();
+    var items  = filtro
+      ? tramiteOpciones.filter(function(t){ return t.toUpperCase().includes(filtro); })
+      : tramiteOpciones;
+    lista.innerHTML = '';
+    if (!items.length) { lista.style.display='none'; return; }
+    items.forEach(function(t) {
+      var div = document.createElement('div');
+      div.textContent = t;
+      div.addEventListener('mousedown', function(e){
+        e.preventDefault();
+        seleccionarTramite(n, t);
+      });
+      lista.appendChild(div);
+    });
+    lista.style.display = 'block';
+  }
+
+  function seleccionarTramite(n, valor) {
+    document.getElementById('ant-tramite-'+n).value = valor;
+    document.getElementById('ant-tram-lista-'+n).style.display = 'none';
+    // Mostrar X en tramites 2 y 3
+    var xBtn = document.getElementById('ant-x-'+n);
+    if (xBtn) xBtn.style.display = 'inline-block';
+    consultarTarifaN(n);
+  }
+
+  window.antEliminarTramite = function(n) {
+    document.getElementById('ant-tramite-'+n).value = '';
+    document.getElementById('ant-precio-'+n).style.display = 'none';
+    document.getElementById('ant-bloque-'+n).style.display = 'none';
+    var xBtn = document.getElementById('ant-x-'+n);
+    if (xBtn) xBtn.style.display = 'none';
+    setLiq('liq-tramite'+n, 0);
+    document.getElementById('liq-row-tramite'+n).style.display = 'none';
+    // Si elimina el 2, también oculta el 3
+    if (n === 2) {
+      document.getElementById('ant-tramite-3').value = '';
+      document.getElementById('ant-precio-3').style.display = 'none';
+      document.getElementById('ant-bloque-3').style.display = 'none';
+      setLiq('liq-tramite3', 0);
+      document.getElementById('liq-row-tramite3').style.display = 'none';
+    }
+    actualizarLiqTramites();
+    calcularTotal();
+  };
+
+  function iniciarAutocomplete(n) {
+    var inp   = document.getElementById('ant-tramite-'+n);
+    var lista = document.getElementById('ant-tram-lista-'+n);
+    var idxAct = -1;
+
+    inp.addEventListener('focus', function(){ filtrarTramites(n, this.value); });
+    inp.addEventListener('input', function(){
+      filtrarTramites(n, this.value);
+      // Limpiar precio si cambia el texto
+      document.getElementById('ant-precio-'+n).style.display = 'none';
+      setLiq('liq-tramite'+n, 0);
+      actualizarLiqTramites();
+    });
+    inp.addEventListener('keydown', function(e) {
+      var items = lista.querySelectorAll('div');
+      if (!items.length) return;
+      if (e.key==='ArrowDown') { idxAct=Math.min(idxAct+1,items.length-1); items.forEach(function(el,i){el.classList.toggle('activo',i===idxAct);}); e.preventDefault(); }
+      else if (e.key==='ArrowUp') { idxAct=Math.max(idxAct-1,0); items.forEach(function(el,i){el.classList.toggle('activo',i===idxAct);}); e.preventDefault(); }
+      else if (e.key==='Enter'&&idxAct>=0) { seleccionarTramite(n, items[idxAct].textContent); idxAct=-1; e.preventDefault(); }
+      else if (e.key==='Escape') { lista.style.display='none'; }
+    });
+    inp.addEventListener('blur', function(){
+      setTimeout(function(){ lista.style.display='none'; }, 150);
+    });
+  }
+
+  function mostrarSiguiente(n) {
+    if (n < 3) {
+      var tramite = document.getElementById('ant-tramite-'+n).value.trim();
+      if (tramite) {
+        var sig = document.getElementById('ant-bloque-'+(n+1));
+        if (sig) {
+          sig.style.display = 'block';
+          habilitarTramite(n+1);
+        }
+      }
+    }
+  }
+
+  function hayTraspaso() {
+    return [1,2,3].some(function(n) {
+      return (document.getElementById('ant-tramite-'+n).value||'').toUpperCase().includes('TRASPASO');
+    });
+  }
+
+  function actualizarLiqTramites() {
+    [1,2,3].forEach(function(n) {
+      var tramite = document.getElementById('ant-tramite-'+n).value;
+      var row     = document.getElementById('liq-row-tramite'+n);
+      var label   = document.getElementById('liq-label-tramite'+n);
+      if (tramite && parseLiq('liq-tramite'+n) > 0) {
+        label.textContent = tramite.length > 38 ? tramite.substring(0,36)+'...' : tramite;
+        row.style.display = 'grid';
+      } else {
+        row.style.display = 'none';
+      }
+    });
+    // Retefuente: visible si hay traspaso Y hay avaluo
+    var refRow = document.getElementById('liq-row-retefuente');
+    if (hayTraspaso() && antAvaluo > 0) {
+      setLiq('liq-retefuente', Math.round(antAvaluo / 100));
+      refRow.style.display = 'grid';
+    } else {
+      refRow.style.display = 'none';
+    }
+    calcularTotal();
+  }
+
+  function consultarTarifaN(n) {
+    var municipio = document.getElementById('ant-municipio').value;
+    var tipo      = getTipo();
+    var tramite   = document.getElementById('ant-tramite-'+n).value.trim();
+    var precioDiv = document.getElementById('ant-precio-'+n);
+    precioDiv.style.display = 'none';
+    setLiq('liq-tramite'+n, 0);
+    mostrarSiguiente(n);
+    actualizarLiqTramites();
+    if (!tramite || !municipio || !tipo) return;
+    fetch(ANT_API+'/tramites/precio?municipio='+encodeURIComponent(municipio)
+      +'&clase='+encodeURIComponent(tipo)
+      +'&tramite='+encodeURIComponent(tramite)
+      +'&departamento=ANTIOQUIA')
+      .then(function(r){return r.json();})
+      .then(function(data){
+        if (data.precio) {
+          precioDiv.textContent = '$ '+data.precio.toLocaleString('es-CO');
+          precioDiv.style.display = 'block';
+          setLiq('liq-tramite'+n, data.precio);
+          actualizarLiqTramites();
+        }
+      }).catch(function(){});
+  }
+
+  // ── INIT ─────────────────────────────────────────────────────────────────
+
+  window.addEventListener('load', function() {
+
+    ['ant-cedula','ant-modelo'].forEach(function(id) {
+      document.getElementById(id).addEventListener('input', function() {
+        this.value = this.value.replace(/[^0-9]/g,'');
+      });
+    });
+
+    // Sincronizar input placa con visualización
+    var placaEdit = document.getElementById('ant-placa-edit');
+    var placaHidden = document.getElementById('ant-placa');
+    if (placaEdit) {
+      placaEdit.addEventListener('input', function() {
+        var val = this.value.toUpperCase().replace(/[^A-Z0-9]/g,'');
+        this.value = val;
+        placaHidden.value = val;
+        var letras  = val.substring(0, 3) || '---';
+        var numeros = val.substring(3)    || '---';
+        document.getElementById('ant-placa-letras').textContent  = letras;
+        document.getElementById('ant-placa-numeros').textContent = numeros;
+      });
+    }
+
+    ['ant-servicio','ant-cilindrada','ant-clase'].forEach(function(id) {
+      document.getElementById(id).addEventListener('input', function() {
+        actualizarVisibilidad(); cargarTramites();
+        actualizarColorPlaca();
+      });
+    });
+
+    document.getElementById('ant-tipodoc').addEventListener('change', function() {
+      actualizarReglasDocumento();
+    });
+
+    function actualizarReglasDocumento() {
+      var tipodoc = document.getElementById('ant-tipodoc').value;
+      var rowRet  = document.getElementById('liq-row-retefuente');
+      var blRet   = document.getElementById('bloque-retefuente');
+      if (tipodoc === 'NIT') {
+        // NIT no paga retefuente — ocultar fila en liquidacion y modulo
+        if (rowRet) rowRet.style.display = 'none';
+        if (blRet) { blRet.style.display = 'none'; blRet.classList.remove('visible'); }
+      } else {
+        // Todos los demas si pagan retefuente
+        if (blRet && infoConfirmada) {
+          blRet.style.display = 'block'; blRet.classList.add('visible');
+        }
+      }
+    }
+
+    // Iniciar autocomplete para los 3 tramites
+    [1,2,3].forEach(function(n){ iniciarAutocomplete(n); });
+
+    LIQ_IDS.forEach(function(id) {
+      var el = document.getElementById(id);
+      if (el) el.addEventListener('input', calcularTotal);
+    });
+
+    // Municipio autocomplete
+    var inputMun  = document.getElementById('ant-municipio-input');
+    var hiddenMun = document.getElementById('ant-municipio');
+    var listaMun  = document.getElementById('ant-mun-lista');
+
+    function mostrarOpciones(filtro) {
+      var items = filtro
+        ? ANT_MUNICIPIOS.filter(function(m){ return m.includes(filtro.toUpperCase()); })
+        : ANT_MUNICIPIOS;
+      listaMun.innerHTML = '';
+      antIdxActivo = -1;
+      if (!items.length) { listaMun.style.display='none'; return; }
+      items.forEach(function(m) {
+        var div = document.createElement('div');
+        div.textContent = m;
+        div.addEventListener('mousedown', function(e){ e.preventDefault(); selMunicipio(m); });
+        listaMun.appendChild(div);
+      });
+      listaMun.style.display = 'block';
+    }
+
+    function selMunicipio(valor) {
+      inputMun.value     = valor;
+      hiddenMun.value    = valor;
+      antMunicipioActual = valor;
+      var munInfo = document.getElementById('ant-municipio-info');
+      if (munInfo) munInfo.value = valor;
+      var placaMun = document.getElementById('ant-placa-municipio');
+      if (placaMun) placaMun.textContent = valor;
+      listaMun.style.display = 'none';
+      document.getElementById('ant-ocr-status').style.display = 'none';
+      actualizarVisibilidad();
+      cargarTramites();
+      var placa = document.getElementById('ant-placa').value.trim().toUpperCase();
+      if (placa && valor) {
+        fetch(ANT_API+'/ocr-guardar-municipio', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({placa: placa, municipio: valor})
+        }).catch(function(){});
+      }
+      mostrarFilasDefecto();
+    }
+
+    inputMun.addEventListener('focus', function(){ mostrarOpciones(this.value); });
+    inputMun.addEventListener('input', function(){ hiddenMun.value=''; actualizarVisibilidad(); mostrarOpciones(this.value); });
+    inputMun.addEventListener('keydown', function(e) {
+      var items = listaMun.querySelectorAll('div');
+      if (!items.length) return;
+      if (e.key==='ArrowDown') { antIdxActivo=Math.min(antIdxActivo+1,items.length-1); items.forEach(function(el,i){el.classList.toggle('activo',i===antIdxActivo);}); e.preventDefault(); }
+      else if (e.key==='ArrowUp') { antIdxActivo=Math.max(antIdxActivo-1,0); items.forEach(function(el,i){el.classList.toggle('activo',i===antIdxActivo);}); e.preventDefault(); }
+      else if (e.key==='Enter'&&antIdxActivo>=0) { selMunicipio(items[antIdxActivo].textContent); e.preventDefault(); }
+      else if (e.key==='Escape') { listaMun.style.display='none'; }
+    });
+    inputMun.addEventListener('blur', function() {
+      setTimeout(function(){ listaMun.style.display='none'; },150);
+      var val = inputMun.value.toUpperCase();
+      if (ANT_MUNICIPIOS.includes(val)) { inputMun.value=val; hiddenMun.value=val; actualizarVisibilidad(); }
+      else { hiddenMun.value=''; actualizarVisibilidad(); }
+    });
+    document.addEventListener('click', function(e){ if(e.target!==inputMun) listaMun.style.display='none'; });
+
+    // OCR
+    var zona    = document.getElementById('ant-ocr-zone');
+    var fileIn  = document.getElementById('ant-ocr-file');
+    var preview = document.getElementById('ant-ocr-preview');
+    var status  = document.getElementById('ant-ocr-status');
+
+    zona.addEventListener('dragover', function(e){ e.preventDefault(); zona.classList.add('dragover'); });
+    zona.addEventListener('dragleave', function(){ zona.classList.remove('dragover'); });
+    zona.addEventListener('drop', function(e){ e.preventDefault(); zona.classList.remove('dragover'); if(e.dataTransfer.files[0]) cargarImagen(e.dataTransfer.files[0]); });
+    fileIn.addEventListener('change', function(){ if(this.files[0]) cargarImagen(this.files[0]); });
+
+    // Listener para la cámara
+    var camaraIn = document.getElementById('ant-camara-file');
+    camaraIn.addEventListener('change', function(){
+      if(this.files[0]) {
+        document.getElementById('ant-zona-ocr').style.display = 'block';
+        document.getElementById('ant-ocr-zone').style.display = 'block';
+        document.getElementById('ant-preview-wrap').style.display = 'none';
+        cargarImagen(this.files[0]);
+        this.value = '';
+      }
+    });
+
+    var imagenBase64Actual = null;
+    var imagenOriginal     = null;
+    var rotacionActual     = 0;
+
+    function cargarImagen(file) {
+      if (!file.type.startsWith('image/')) { mostrarStatus('err','Solo imagenes JPG, PNG, WEBP'); return; }
+      limpiarCampos();
+      rotacionActual = 0;
+      imagenOriginal = null;
+      var reader = new FileReader();
+      reader.onload = function(e) {
+        var img = new Image();
+        img.onload = function() {
+          // Auto-rotar si está vertical
+          if (img.height > img.width) rotacionActual = 90;
+          imagenBase64Actual = e.target.result;
+          mostrarPreviewConRotacion();
+        };
+        img.src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    }
+
+    function mostrarPreviewConRotacion() {
+      var img = new Image();
+      img.onload = function() {
+        // Guardar imagen original sin rotar para que girar siempre parta de cero
+        if (!imagenOriginal) imagenOriginal = imagenBase64Actual;
+        var canvas = document.createElement('canvas'), ctx = canvas.getContext('2d');
+        var rad = rotacionActual * Math.PI / 180;
+        if (rotacionActual === 90 || rotacionActual === 270) {
+          canvas.width = img.height; canvas.height = img.width;
+        } else {
+          canvas.width = img.width; canvas.height = img.height;
+        }
+        ctx.translate(canvas.width/2, canvas.height/2);
+        ctx.rotate(rad);
+        ctx.drawImage(img, -img.width/2, -img.height/2);
+        var imagenRotada = canvas.toDataURL('image/jpeg', 0.9);
+        // Mostrar preview
+        var previewEl = document.getElementById('ant-ocr-preview');
+        previewEl.src = imagenRotada;
+        // Guardar imagen rotada para el OCR
+        imagenBase64Actual = imagenRotada;
+        // Mostrar panel de orientación
+        document.getElementById('ant-ocr-zone').style.display = 'none';
+        document.getElementById('ant-preview-wrap').style.display = 'block';
+        document.getElementById('ant-ocr-status').style.display = 'none';
+      };
+      img.src = imagenBase64Actual;
+    }
+
+    var imagenOriginal = null; // guarda siempre la imagen sin ninguna rotación
+
+    window.antGirarImagen = function() {
+      rotacionActual = (rotacionActual + 90) % 360;
+      var img = new Image();
+      img.onload = function() {
+        var canvas = document.createElement('canvas'), ctx = canvas.getContext('2d');
+        var rad = rotacionActual * Math.PI / 180;
+        if (rotacionActual === 90 || rotacionActual === 270) {
+          canvas.width = img.height; canvas.height = img.width;
+        } else {
+          canvas.width = img.width; canvas.height = img.height;
+        }
+        ctx.translate(canvas.width/2, canvas.height/2);
+        ctx.rotate(rad);
+        ctx.drawImage(img, -img.width/2, -img.height/2);
+        var imagenRotada = canvas.toDataURL('image/jpeg', 0.9);
+        document.getElementById('ant-ocr-preview').src = imagenRotada;
+        imagenBase64Actual = imagenRotada;
+      };
+      // Siempre desde la imagen original sin rotación acumulada
+      img.src = imagenOriginal;
+    };
+
+    window.antContinuarOCR = function() {
+      document.getElementById('ant-preview-wrap').style.display = 'none';
+      procesarImagen(imagenBase64Actual);
+    };
+
+    window.antEliminarImagen = function() {
+      imagenBase64Actual = null;
+      rotacionActual = 0;
+      document.getElementById('ant-preview-wrap').style.display = 'none';
+      document.getElementById('ant-ocr-zone').style.display = 'block';
+      document.getElementById('ant-ocr-status').style.display = 'none';
+      document.getElementById('ant-ocr-preview').src = '';
+      document.getElementById('ant-ocr-file').value = '';
+      document.getElementById('ant-camara-file').value = '';
+    };
+
+    // Mostrar solo bloque-info al terminar de confirmar la foto
+    window.antMostrarSoloInfo = function() {
+      document.getElementById('bloque-info').classList.add('visible');
+      ['bloque-tramites','bloque-depto','bloque-municipal'].forEach(function(id) {
+        document.getElementById(id).classList.remove('visible');
+      });
+      document.getElementById('bloque-liq').style.display = 'none';
+      // Expandir info
+      document.getElementById('ant-info-contenido').style.display = 'block';
+      document.getElementById('ant-info-colapsado').style.display = 'none';
+    };
+
+    function procesarImagen(imagenBase64) {
+      mostrarStatus('procesando','Leyendo tarjeta de propiedad...');
+      fetch(ANT_API+'/ocr-tarjeta', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({imagen: imagenBase64, municipio: document.getElementById('ant-municipio').value})
+      })
+      .then(function(r){return r.json();})
+      .then(function(data) {
+        if (data.error) { mostrarStatus('err','Error: '+data.error); return; }
+
+        var tipodocMap = (function(t) {
+          if (!t) return 'CC';
+          t = t.toUpperCase().replace(/[.\s]/g,'');
+          if (t==='CC') return 'CC';
+          if (t==='NIT') return 'NIT';
+          if (t==='CE') return 'CE';
+          if (t==='TI') return 'TI';
+          if (t==='RC') return 'RC';
+          if (t==='PPT') return 'PPT';
+          return 'CC';
+        })(data.tipo_documento);
+
+        if (data.placa) {
+          document.getElementById('ant-placa').value = data.placa;
+          var pe = document.getElementById('ant-placa-edit');
+          if (pe) pe.value = data.placa;
+          document.getElementById('ant-placa-letras').textContent  = data.placa.substring(0,3) || '---';
+          document.getElementById('ant-placa-numeros').textContent = data.placa.substring(3)   || '---';
+        }
+        if (data.marca)      document.getElementById('ant-marca').value      = data.marca;
+        if (data.linea)      document.getElementById('ant-linea').value      = data.linea;
+        if (data.modelo)     document.getElementById('ant-modelo').value     = data.modelo;
+        if (data.clase)      document.getElementById('ant-clase').value      = data.clase;
+        if (data.servicio) {
+          document.getElementById('ant-servicio').value = data.servicio;
+          actualizarColorPlaca();
+        }
+        if (data.capacidad)  document.getElementById('ant-capacidad').value  = data.capacidad;
+        if (data.cilindrada) document.getElementById('ant-cilindrada').value = data.cilindrada;
+        if (data.carroceria) document.getElementById('ant-carroceria').value = data.carroceria;
+        if (data.cedula)     document.getElementById('ant-cedula').value     = data.cedula;
+        if (data.apellidos)  document.getElementById('ant-apellidos').value  = data.apellidos;
+        document.getElementById('ant-tipodoc').value = tipodocMap;
+        actualizarReglasDocumento();
+
+        if (!data.desde_cache) antDatosOCR = data;
+        ocrLeido = true;
+
+        document.getElementById('ant-bienvenida').style.display     = 'none';
+        document.getElementById('ant-municipio-wrap').style.display = 'block';
+
+        if (data.municipio && data.desde_cache) {
+          document.getElementById('ant-mun-confirm-nombre').textContent  = data.municipio;
+          document.getElementById('ant-mun-confirm').style.display       = 'block';
+          document.getElementById('ant-mun-label').style.display         = 'none';
+          document.getElementById('ant-mun-campo').style.display         = 'none';
+          document.getElementById('ant-municipio-input').value = data.municipio;
+          document.getElementById('ant-municipio').value       = data.municipio;
+        } else {
+          document.getElementById('ant-mun-confirm').style.display = 'none';
+          document.getElementById('ant-mun-label').style.display   = 'block';
+          document.getElementById('ant-mun-campo').style.display   = 'block';
+        }
+
+        var detectados = [data.placa,data.marca,data.modelo,data.cedula].filter(Boolean).length;
+        mostrarStatus(detectados>0?'ok':'err',
+          detectados>0
+            ? 'He leido tu tarjeta.<br>¿De qué municipio es este vehículo?'
+            : 'No se pudieron detectar datos. Completa manualmente.');
+      })
+      .catch(function(err){ mostrarStatus('err','Error: '+err.message); });
+    }
+
+    function mostrarStatus(tipo, msg) {
+      status.className = 'ant-ocr-status '+tipo;
+      status.innerHTML = msg; status.style.display='block';
+    }
+
+    // Impuesto Departamental
+    document.getElementById('ant-btn-impuesto').addEventListener('click', function() {
+      var placa     = document.getElementById('ant-placa').value.trim().toUpperCase();
+      var cedula    = document.getElementById('ant-cedula').value.trim();
+      var modelo    = document.getElementById('ant-modelo').value.trim();
+      var municipio = document.getElementById('ant-municipio').value;
+      var apellidos = document.getElementById('ant-apellidos').value.trim().toUpperCase();
+      var tipodoc   = document.getElementById('ant-tipodoc').value;
+      var resultado = document.getElementById('ant-result-depto');
+      var btn       = this;
+
+      if (!placa||!cedula||!modelo||!municipio||!apellidos) {
+        resultado.innerHTML='<div class="ant-alert error">Completa todos los campos requeridos.</div>'; return;
+      }
+
+      btn.disabled=true;
+      resultado.innerHTML='<div class="ant-loading"><div class="ant-spinner-ring"></div><span>Consultando la Gobernacion de Antioquia...</span></div>';
+
+      fetch(ANT_API+'/consultar?placa='+encodeURIComponent(placa)
+        +'&municipio=antioquia&identificacion='+encodeURIComponent(cedula)
+        +'&modelo='+encodeURIComponent(modelo)
+        +'&municipio_transito='+encodeURIComponent(municipio)
+        +'&apellidos_propietario='+encodeURIComponent(apellidos)
+        +'&tipo_documento='+encodeURIComponent(tipodoc))
+        .then(function(r){return r.json();})
+        .then(function(data){
+          btn.disabled=false;
+          if (data.error){resultado.innerHTML='<div class="ant-alert error">'+data.error+'</div>';return;}
+
+          if (data.avaluo) {
+            antAvaluo = data.avaluo;
+            // Llenar retefuente solo si hay traspaso
+            if (hayTraspaso()) {
+              setLiq('liq-retefuente', Math.round(data.avaluo / 100));
+              document.getElementById('liq-row-retefuente').style.display = 'grid';
             }
-        },
-        timeout=60
-    )
-    validacion = r2.json()
-    if validacion.get("codigo") != 1:
-        raise Exception(f"Cuestionario inválido: {validacion.get('descripcion')}")
+            // Ocultar módulo retefuente porque ya tenemos el avalúo de Antioquia
+            var blRet = document.getElementById('bloque-retefuente');
+            if (blRet) { blRet.style.display = 'none'; blRet.classList.remove('visible'); }
+          }
+          if (data.total) {
+            setLiq('liq-depto', data.total);
+            document.getElementById('liq-row-depto').style.display = 'grid';
+          }
 
-    try:
-        token_captcha2 = resolver_turnstile_2captcha(ANTIOQUIA_SITE_KEY, ANTIOQUIA_URL)
-    except Exception as e:
-        raise Exception(f"Error resolviendo segundo captcha: {e}")
-    session.headers.update({"captcha": token_captcha2})
+          var info = data.placa_info||{};
+          var infoHtml = info.marca
+            ?'<div class="ant-info"><div class="ant-info-item"><label>Placa</label><span>'+data.placa+'</span></div>'
+             +'<div class="ant-info-item"><label>Marca</label><span>'+info.marca+' '+(info.linea||'')+'</span></div>'
+             +'<div class="ant-info-item"><label>Modelo</label><span>'+(info.modelo||'')+'</span></div>'
+             +'<div class="ant-info-item"><label>Propietario</label><span>'+(info.propietario||'')+'</span></div></div>':'';
 
-    token_cuestionario = session.cookies.get("token_cuestionario")
-    if not token_cuestionario:
-        raise Exception("No se pudo obtener el token de sesión.")
+          if (data.sin_deuda) {
+            resultado.innerHTML=infoHtml
+              +'<div class="ant-alert success">'+data.placa+' esta a paz y salvo con la Gobernacion de Antioquia.</div>'
+              +(data.avaluo?'<div class="ant-extra"><span>Retefuente (1%)</span><strong>$'+Math.round(data.avaluo/100).toLocaleString('es-CO')+'</strong></div>':'');
+            return;
+          }
 
-    r3 = session.post(
-        f"{ANTIOQUIA_API}/ConsultarEstadoCuentaImpAntioquia/consultarEstadoCuentaVehiculoHomePublico",
-        json={"placa": placa, "informacionDeclarante": {
-            "idsolicitante": identificacion, "idTipoIdentificacion": tipo_documento_id
-        }},
-        headers={"Cookie": f"token_cuestionario={token_cuestionario}"},
-        timeout=60
-    )
-    return session, token_cuestionario, r3.json()
+          resultado.innerHTML=infoHtml
+            +'<table class="ant-table"><thead><tr><th>Vigencia</th><th>Estado</th><th style="text-align:right">Valor</th></tr></thead><tbody>'
+            +(data.registros||[]).map(function(r){
+              return '<tr><td>'+r.vigencia+'</td><td>'+r.estado+'</td><td style="text-align:right">'
+                +(r.total_vigencia?'$'+r.total_vigencia.toLocaleString('es-CO'):'Ver con asesor')+'</td></tr>';
+            }).join('')+'</tbody></table>'
+            +(data.total?'<div class="ant-total-bar"><span>Total vigencias</span><span>$'+data.total.toLocaleString('es-CO')+'</span></div>':'')
+            +(data.avaluo?'<div class="ant-extra"><span>Retefuente (1%)</span><strong>$'+Math.round(data.avaluo/100).toLocaleString('es-CO')+'</strong></div>':'')
+            +(data.excede_limite?'<div class="ant-warning">'+data.mensaje_limite+'</div>':'');
 
-
-def _consultar_vigencia_antioquia(vigencia, session, token_cuestionario,
-                                   placa, identificacion, tipo_documento_id,
-                                   doc_abreviatura, doc_nombre,
-                                   celular, email, direccion, municipio, municipio_cod, departamento_cod):
-    """
-    Consulta el costo de una vigencia específica.
-    Costo: 2 Turnstiles adicionales.
-    """
-    try:
-        token_prop = resolver_turnstile_2captcha(ANTIOQUIA_SITE_KEY, ANTIOQUIA_URL)
-    except Exception as e:
-        raise Exception(f"Error resolviendo captcha vigencia {vigencia}: {e}")
-    session.headers.update({"captcha": token_prop})
-
-    r4 = session.post(
-        f"{ANTIOQUIA_API}/UsuariosPortalAntioquia/consultarPropietarioVehiculo",
-        json={"tipoDoc": doc_abreviatura, "nroDoc": identificacion, "placa": placa, "vigencia": vigencia},
-        headers={"Cookie": f"token_cuestionario={token_cuestionario}"},
-        timeout=60
-    )
-    propietario = r4.json().get("propietario", {})
-
-    session.post(f"{ANTIOQUIA_API}/TablasTipo/obtenerTablasPropietario", json={},
-                 headers={"Cookie": f"token_cuestionario={token_cuestionario}"}, timeout=60)
-    session.get(f"{ANTIOQUIA_API}/UtilImpuestos/obtenerDescripcionPPST",
-                headers={"Cookie": f"token_cuestionario={token_cuestionario}"}, timeout=60)
-    session.post(f"{ANTIOQUIA_API}/Pagos/parametrosPago", json={},
-                 headers={"Cookie": f"token_cuestionario={token_cuestionario}"}, timeout=60)
-    session.get(f"{ANTIOQUIA_API}/UtilImpuestos/obtenerVigenciaMinimaAutodeclarar",
-                headers={"Cookie": f"token_cuestionario={token_cuestionario}"}, timeout=60)
-
-    try:
-        token_decl = resolver_turnstile_2captcha(ANTIOQUIA_SITE_KEY, ANTIOQUIA_URL)
-    except Exception as e:
-        raise Exception(f"Error resolviendo captcha declaración vigencia {vigencia}: {e}")
-    session.headers.update({"captcha": token_decl})
-    session.cookies.clear()
-
-    es_nit = (str(tipo_documento_id) == "2")
-    if es_nit:
-        declarante = {
-            "idsolicitante": identificacion,
-            "idtipodocumento": doc_abreviatura,
-            "desctipodocument": doc_nombre,
-            "nombres": propietario.get("nameOrg1", ""),
-            "apellidos": "",
-            "celular": celular,
-            "telefono": propietario.get("celphone", celular),
-            "email": email,
-            "direccion": direccion, "municipio": municipio,
-            "departamento": "ANTIOQUIA", "nivreclamacion": 0, "procedimiento": ""
-        }
-    else:
-        declarante = {
-            "idsolicitante": identificacion,
-            "idtipodocumento": doc_abreviatura,
-            "desctipodocument": doc_nombre,
-            "nombres": propietario.get("nameFirst", ""),
-            "apellidos": propietario.get("nameLast", ""),
-            "celular": celular, "telefono": celular, "email": email,
-            "direccion": direccion, "municipio": municipio,
-            "departamento": "ANTIOQUIA", "nivreclamacion": 0, "procedimiento": ""
-        }
-
-    r5 = session.post(
-        f"{ANTIOQUIA_API}/LiquidacionAntioquia/crearDeclaracionImpuestoAnt",
-        json={
-            "formularioLiquidacion": "",
-            "declarante": declarante,
-            "iIdliqIm": 0,
-            "informacionComplementaria": {
-                "idTipoDocumento": int(tipo_documento_id),
-                "distribucionDepartamento": departamento_cod,
-                "distribucionMunicipio": municipio_cod,
-                "direccionCompleta": direccion,
-                "nombreDistribucionDepartamento": "ANTIOQUIA",
-                "nombreDistribucionMunicipio": municipio,
-                "tipoCanalLiquidacion": 2, "tipoOpcionLiquidacion": 1
-            },
-            "placa": placa,
-            "vigencia": [{"persl": vigencia}]
-        },
-        timeout=60
-    )
-    return r5.json()
-
-
-def consultar_antioquia(page, placa, identificacion, tipo_documento_abrev,
-                        modelo, municipio_transito, apellidos_propietario,
-                        celular="3000000000", email="consulta@consulta.com",
-                        direccion="CRA", municipio="MEDELLIN",
-                        municipio_cod=5001000, departamento_cod=5, job_id=None):
-    """
-    Proceso completo para Antioquia.
-    Retorna (registros, total, avaluo, estado_vehiculo, excede_limite).
-    """
-    LIMITE = ANTIOQUIA_LIMITE_VIGENCIAS
-
-    # Resolver tipo de documento
-    tipo_documento_id = ANTIOQUIA_TIPO_DOC_MAP.get(tipo_documento_abrev.upper(), "1")
-    tipo_doc_info     = ANTIOQUIA_TIPOS_DOCUMENTO.get(tipo_documento_id, ANTIOQUIA_TIPOS_DOCUMENTO["1"])
-    doc_abreviatura   = tipo_doc_info["abreviatura"]
-    doc_nombre        = tipo_doc_info["nombre"]
-
-    # Si es NIT, calcular y agregar dígito de verificación
-    if tipo_documento_id == "2":
-        identificacion = str(identificacion) + str(_calcular_digito_nit(identificacion))
-
-    if job_id:
-        job_actualizar(job_id, "Estoy ingresando a la página de la Gobernación de Antioquia...")
-    print(f"\n  → Consultando primer bloque de datos ({placa})...")
-    session0, token0, data3 = _sesion_antioquia(
-        placa, identificacion, tipo_documento_id,
-        modelo, municipio_transito, apellidos_propietario
-    )
-
-    estado_veh          = data3.get("estadoCuenta", {})
-    vigencias_adeudadas = data3.get("listaVigenciasAdeudas", [])
-    avaluo              = estado_veh.get("avaluoComercial", 0) or 0
-    print(f"  → Vigencias adeudadas encontradas: {len(vigencias_adeudadas)}")
-    if job_id:
-        if not vigencias_adeudadas:
-            job_actualizar(job_id, "Revisé y este vehículo está a paz y salvo con la Gobernación de Antioquia.")
-        else:
-            job_actualizar(job_id, f"Encontré {len(vigencias_adeudadas)} año(s) con impuesto pendiente. Voy a consultar el valor de cada uno...")
-
-    # Paz y salvo
-    if not vigencias_adeudadas:
-        return [], 0, avaluo, estado_veh, False
-
-    total_vigencias       = len(vigencias_adeudadas)
-    vigencias_a_consultar = sorted(vigencias_adeudadas, key=lambda x: x["vigencia"], reverse=True)
-    excede_limite         = total_vigencias > LIMITE
-    if excede_limite:
-        vigencias_a_consultar = vigencias_a_consultar[:LIMITE]
-
-    registros         = []
-    total_suma        = 0
-    avaluo_actual     = 0
-    retefuente_actual = 0
-    MAX_INTENTOS      = 2
-
-    for v in vigencias_a_consultar:
-        anio = v.get("vigencia")
-        print(f"\n  → Consultando vigencia {anio}...")
-        if job_id:
-            job_actualizar(job_id, f"Estoy consultando el impuesto del año {anio}...")
-
-        total_pagar  = None
-        avaluo_vig   = 0
-
-        for intento in range(1, MAX_INTENTOS + 1):
-            if intento > 1:
-                print(f"  ↺ Reintentando vigencia {anio}...")
-            try:
-                session_v, token_v, _ = _sesion_antioquia(
-                    placa, identificacion, tipo_documento_id,
-                    modelo, municipio_transito, apellidos_propietario
-                )
-                data_vig = _consultar_vigencia_antioquia(
-                    anio, session_v, token_v,
-                    placa, identificacion, tipo_documento_id,
-                    doc_abreviatura, doc_nombre,
-                    celular, email, direccion, municipio, municipio_cod, departamento_cod
-                )
-                # Mostrar error del servidor si lo hay
-                _msg    = data_vig.get("mensaje") or data_vig.get("descripcion")
-                _codigo = data_vig.get("codigo")
-                if _codigo and _codigo != 1 and _msg:
-                    print(f"  ✖ Error servidor vigencia {anio}: {_msg}")
-
-                total_pagar = data_vig.get("totalPagar")
-                avaluo_vig  = data_vig.get("avaluoComercial", 0) or 0
-                if total_pagar is not None:
-                    print(f"  ✔ Vigencia {anio}: ${total_pagar:,}")
-                    if job_id:
-                        job_actualizar(job_id, f"Año {anio}: impuesto es ${total_pagar:,}. Continuando...")
-                    break
-            except Exception as e:
-                print(f"  ✖ Error vigencia {anio} intento {intento}: {e}")
-
-        if not avaluo_actual and avaluo_vig:
-            avaluo_actual     = avaluo_vig
-            retefuente_actual = round(avaluo_vig / 100)
-
-        if total_pagar is not None:
-            total_suma += total_pagar
-
-        registros.append({
-            "vigencia":       str(anio),
-            "estado":         "Pendiente de pago",
-            "total_vigencia": total_pagar,
+          // Mostrar bloque municipal después de resultado exitoso
+          if (antMunicipioActual && MUNICIPIOS_MUNICIPALES[antMunicipioActual]) {
+            var blMun = document.getElementById('bloque-municipal');
+            blMun.classList.add('visible');
+            blMun.style.display = 'block';
+            document.getElementById('ant-result-municipal').innerHTML = '';
+            var contMun = document.getElementById('contenido-municipal');
+            if (contMun) contMun.style.display = 'block';
+            var chevMun = document.getElementById('chevron-municipal');
+            if (chevMun) chevMun.textContent = '▲';
+          }
         })
+        .catch(function(){btn.disabled=false;resultado.innerHTML='<div class="ant-alert error">Error de conexion.</div>';});
+    });
 
-    print(f"\n  ✔ ¡Consulta Antioquia finalizada!")
-    return registros, total_suma, avaluo_actual or avaluo, estado_veh, excede_limite
+    // Impuesto Municipal
+    document.getElementById('ant-btn-municipal').addEventListener('click', function() {
+      var placa     = document.getElementById('ant-placa').value.trim().toUpperCase();
+      var municipio = document.getElementById('ant-municipio').value;
+      var resultado = document.getElementById('ant-result-municipal');
+      var btn       = this;
 
+      if (!placa||!municipio) {
+        resultado.innerHTML='<div class="ant-alert error">Ingresa la placa y selecciona el municipio.</div>'; return;
+      }
 
-# ============================================================
-#  MAPA DE MUNICIPIOS
-# ============================================================
-MUNICIPIOS = {
-    "envigado":    consultar_envigado,
-    "sabaneta":    consultar_sabaneta,
-    "itagui":      consultar_itagui,
-    "bello":       consultar_bello,
-    "laestrella":  consultar_laestrella,
-    "la estrella": consultar_laestrella,
-}
+      var municipioApi = MUNICIPIOS_MUNICIPALES[municipio];
+      btn.disabled=true;
+      resultado.innerHTML='<div class="ant-loading"><div class="ant-spinner-ring"></div><span>Consultando impuesto municipal...</span></div>';
 
+      fetch(ANT_API+'/consultar?placa='+encodeURIComponent(placa)+'&municipio='+encodeURIComponent(municipioApi))
+        .then(function(r){return r.json();})
+        .then(function(data){
+          btn.disabled=false;
+          if (data.error){resultado.innerHTML='<div class="ant-alert error">'+data.error+'</div>';return;}
 
-@app.route("/consultar/estado", methods=["GET"])
-def consultar_estado():
-    job_id = request.args.get("job_id", "").strip()
-    if not job_id:
-        return jsonify({"error": "Falta job_id"}), 400
-    try:
-        conn = get_db_conn()
-        cur  = conn.cursor()
-        cur.execute("SELECT estado, mensaje, resultado FROM consulta_jobs WHERE job_id=%s", (job_id,))
-        row = cur.fetchone()
-        cur.close(); conn.close()
-        if not row:
-            return jsonify({"estado": "no_encontrado"})
-        estado, mensaje, resultado = row
-        resp = {"estado": estado, "mensaje": mensaje}
-        if estado == "listo" and resultado:
-            resp["resultado"] = resultado
-        elif estado == "error":
-            resp["error"] = mensaje
-        return jsonify(resp)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+          if (data.total) {
+            setLiq('liq-municipal', data.total);
+            document.getElementById('liq-row-municipal').style.display='grid';
+          }
 
+          if (data.sin_deuda) {
+            resultado.innerHTML='<div class="ant-alert success">'+data.placa+' esta al dia en '+municipio+'.</div>';
+            return;
+          }
 
-@app.route("/consultar", methods=["GET"])
-def consultar():
-    import traceback
-    placa     = request.args.get("placa", "").upper().strip()
-    municipio = request.args.get("municipio", "").lower().strip()
-    if not placa or not municipio:
-        return jsonify({"error": "Debes proporcionar placa y municipio."}), 400
-    if municipio not in MUNICIPIOS and municipio != "antioquia":
-        return jsonify({"error": f"Municipio '{municipio}' no reconocido.", "opciones": list(MUNICIPIOS.keys()) + ["antioquia"]}), 400
-
-    identificacion     = request.args.get("identificacion", "").strip()
-    tipo_documento     = request.args.get("tipo_documento", "CC").strip().upper() or "CC"
-    modelo             = request.args.get("modelo", "").strip()
-    municipio_transito = request.args.get("municipio_transito", "").upper().strip()
-    apellidos          = request.args.get("apellidos_propietario", "").upper().strip()
-    celular            = request.args.get("celular", "3000000000").strip()
-    email              = request.args.get("email", "consulta@consulta.com").strip()
-    direccion          = request.args.get("direccion", "CRA").strip()
-    mun_declarante     = request.args.get("municipio_declarante", "MEDELLIN").strip().upper()
-    municipio_cod      = int(request.args.get("municipio_cod", 5001000))
-    departamento_cod   = int(request.args.get("departamento_cod", 5))
-
-    if municipio == "antioquia":
-        if not identificacion or not modelo or not municipio_transito or not apellidos:
-            return jsonify({"error": "Para Antioquia debes proporcionar: identificacion, modelo, municipio_transito, apellidos_propietario."}), 400
-
-    # Para Antioquia usar sistema asíncrono con job_id
-    if municipio == "antioquia":
-        job_id = str(uuid.uuid4())[:12]
-        job_crear(job_id)
-
-        def ejecutar_antioquia():
-            try:
-                job_actualizar(job_id, "Estoy preparando la consulta...")
-                with sync_playwright() as playwright:
-                    browser = playwright.chromium.launch(headless=True, args=[
-                        "--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu",
-                        "--single-process", "--no-zygote", "--disable-setuid-sandbox"
-                    ])
-                    context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-                    page = context.new_page()
-                    registros, total, avaluo, estado_veh, excede = consultar_antioquia(
-                        page, placa, identificacion, tipo_documento,
-                        modelo, municipio_transito, apellidos,
-                        celular, email, direccion, mun_declarante,
-                        municipio_cod, departamento_cod, job_id=job_id
-                    )
-                    context.close(); browser.close()
-
-                excede_lim = excede
-                registros_fin = registros
-                total_fin = total
-                respuesta = {
-                    "placa":      placa,
-                    "municipio":  "antioquia",
-                    "placa_info": {
-                        "marca":       estado_veh.get("marca", ""),
-                        "linea":       estado_veh.get("linea", ""),
-                        "modelo":      estado_veh.get("modelo", ""),
-                        "propietario": estado_veh.get("nombrePropietario", ""),
-                    },
-                    "registros":  registros_fin,
-                    "total":      total_fin,
-                    "avaluo":     avaluo,
-                    "retefuente": round(avaluo / 100) if avaluo else 0,
-                    "sin_deuda":  len(registros_fin) == 0,
-                }
-                if excede_lim:
-                    respuesta["excede_limite"]  = True
-                    respuesta["mensaje_limite"] = f"El límite de consulta es de {ANTIOQUIA_LIMITE_VIGENCIAS} vigencias. Comunícate con un asesor de la Gobernación de Antioquia al 6044444666."
-                job_terminar(job_id, respuesta)
-            except Exception as e:
-                print(traceback.format_exc(), flush=True)
-                msg = str(e)
-                if any(x in msg.lower() for x in ["net::err", "connection"]):
-                    msg = f"No se pudo conectar al portal de Antioquia. Intenta más tarde."
-                job_error(job_id, msg)
-
-        hilo = threading.Thread(target=ejecutar_antioquia, daemon=True)
-        hilo.start()
-        return jsonify({"job_id": job_id, "estado": "procesando"})
-
-    # Para municipios usar sistema síncrono
-    resultado       = {}
-    error_container = {}
-
-    def ejecutar():
-        try:
-            with sync_playwright() as playwright:
-                browser = playwright.chromium.launch(headless=True, args=[
-                    "--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu",
-                    "--single-process", "--no-zygote", "--disable-setuid-sandbox"
-                ])
-                context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-                page = context.new_page()
-                if municipio not in ["bello", "sabaneta", "laestrella"]:
-                    bloquear_recursos(page)
-                funcion = MUNICIPIOS[municipio]
-                registros, total = funcion(page, placa)
-                resultado['registros'] = registros
-                resultado['total']     = total
-                context.close(); browser.close()
-        except Exception as e:
-            error_container['error'] = str(e)
-            print(traceback.format_exc(), flush=True)
-
-    hilo = threading.Thread(target=ejecutar)
-    hilo.start()
-    hilo.join(timeout=620)
-
-    if hilo.is_alive():
-        return jsonify({"error": "La consulta tardo demasiado. Intenta de nuevo."}), 504
-
-    if error_container:
-        error = error_container['error'].lower()
-        if any(x in error for x in ["net::err_internet_disconnected", "net::err_name_not_resolved",
-                                     "net::err_connection_refused", "net::err_connection_timed_out",
-                                     "net::err_connection_reset", "net::err_aborted"]):
-            return jsonify({"error": f"No se pudo conectar al portal de {municipio}. Intenta mas tarde."}), 503
-        return jsonify({"error": error_container['error']}), 500
-
-    return jsonify({
-        "placa":     placa,
-        "municipio": municipio,
-        "registros": resultado.get('registros', []),
-        "total":     resultado.get('total', 0),
-        "sin_deuda": resultado.get('total', 0) == 0
-    })
-
-
-# ============================================================
-#  RETEFUENTE
-# ============================================================
-
-# Mapeo clase OCR → tabla retefuente
-def _tabla_retefuente(clase, carroceria=''):
-    clase      = (clase or '').strip().upper()
-    carroceria = (carroceria or '').strip().upper()
-    if clase in ('AUTOMOVIL', 'AUTOMÓVIL'):             return 'T1'
-    if clase == 'CAMIONETA':
-        return 'T3' if carroceria == 'DOBLE CABINA' else 'T2'
-    if clase in ('CAMPERO',):                            return 'T2'
-    if clase in ('MOTOCICLETA', 'MOTOCARRO'):            return 'T5'
-    if clase in ('BUS', 'BUSETA', 'MICROBUS', 'MICROBÚS'): return 'T6'
-    if clase in ('CAMION', 'CAMIÓN', 'VOLQUETA'):        return 'T7'
-    if clase == 'AMBULANCIA':                            return 'T8'
-    return None
-
-def _col_anio(modelo):
-    """Devuelve el nombre de columna según el modelo del vehículo."""
-    try:
-        anio = int(str(modelo).strip())
-    except:
-        return 'anio_2001_ant'
-    if anio <= 2001:
-        return 'anio_2001_ant'
-    if anio > 2025:
-        return 'anio_2025'
-    return f'anio_{anio}'
-
-
-@app.route("/retefuente/buscar", methods=["GET"])
-def retefuente_buscar():
-    """
-    Busca opciones de retefuente según marca, clase, carroceria y modelo.
-    Devuelve lista de opciones para que el usuario elija.
-    """
-    marca      = request.args.get("marca", "").strip().upper()
-    linea      = request.args.get("linea", "").strip().upper()
-    clase      = request.args.get("clase", "").strip().upper()
-    carroceria = request.args.get("carroceria", "").strip().upper()
-    modelo     = request.args.get("modelo", "").strip()
-    cilindraje = request.args.get("cilindraje", "0").strip()
-
-    if not marca or not clase or not modelo:
-        return jsonify({"error": "Debes enviar marca, clase y modelo."}), 400
-
-    tabla = _tabla_retefuente(clase, carroceria)
-    if not tabla:
-        return jsonify({"error": f"Clase '{clase}' no tiene tabla de retefuente."}), 400
-
-    col_anio = _col_anio(modelo)
-
-    try:
-        conn = get_db_conn()
-        cur  = conn.cursor()
-
-        # Cilindraje del vehículo para filtrar — mostrar desde (cilindraje - 100) hacia arriba
-        try:
-            cil_vehiculo = int(cilindraje) if cilindraje else 0
-        except:
-            cil_vehiculo = 0
-        cil_min = max(0, cil_vehiculo - 50) if cil_vehiculo > 0 else 0
-
-        # Función auxiliar para construir query con filtro cilindraje
-        def query_retefuente(where_extra, params_extra, cil_desde, limite=8):
-            cil_cond = f"AND cilindraje >= {cil_desde}" if cil_desde > 0 else ""
-            order = f"CASE WHEN cilindraje >= {cil_vehiculo} THEN cilindraje ELSE cilindraje + 999999 END, linea"
-            sql = f"""
-                SELECT id, marca, linea, cilindraje, {col_anio} as avaluo
-                FROM retefuente_2026
-                WHERE tabla = %s AND marca = %s {where_extra} {cil_cond} AND {col_anio} > 0
-                ORDER BY {order}
-                LIMIT {limite}
-            """
-            cur.execute(sql, [tabla, marca] + params_extra)
-            return cur.fetchall()
-
-        # Buscar solo cilindraje >= vehiculo (exacto o superior)
-        rows = []
-        palabras = [p for p in linea.split() if len(p) > 2][:3]
-
-        # 1. Con palabras de la línea + cilindraje >= vehiculo
-        if palabras and linea:
-            like_conds = " AND ".join(["linea ILIKE %s" for _ in palabras])
-            rows = query_retefuente(f"AND {like_conds}", [f'%{p}%' for p in palabras], cil_vehiculo)
-
-        # 2. Línea base estándar + cilindraje >= vehiculo
-        if not rows:
-            rows = query_retefuente(
-                "AND (linea ILIKE %s OR linea ILIKE %s)",
-                ['%LINEA BASE%', '%BASE ESTANDAR%'], cil_vehiculo
-            )
-
-        # 3. Todas las líneas de esa marca + cilindraje >= vehiculo
-        if not rows:
-            rows = query_retefuente("", [], cil_vehiculo)
-
-        cur.close()
-        conn.close()
-
-        opciones = [{
-            "id":         r[0],
-            "marca":      r[1],
-            "linea":      r[2],
-            "cilindraje": r[3],
-            "avaluo":     r[4],
-            "retefuente": round(r[4] / 100) if r[4] else 0
-        } for r in rows]
-
-        return jsonify({
-            "tabla":   tabla,
-            "col_anio": col_anio,
-            "opciones": opciones,
-            "total":   len(opciones)
+          resultado.innerHTML='<div class="ant-info">'
+            +'<div class="ant-info-item"><label>Placa</label><span>'+data.placa+'</span></div>'
+            +'<div class="ant-info-item"><label>Municipio</label><span>'+municipio+'</span></div>'
+            +(data.registros&&data.registros[0]&&data.registros[0].tipo_vehiculo?'<div class="ant-info-item"><label>Tipo</label><span>'+data.registros[0].tipo_vehiculo+'</span></div>':'')
+            +'</div>'
+            +'<table class="ant-table"><thead><tr><th>Anio</th><th>Descripcion</th><th style="text-align:right">Valor</th></tr></thead><tbody>'
+            +(data.registros||[]).map(function(r){
+              return '<tr><td>'+r.vigencia+'</td><td>'+(r.descripcion||'Sistematizacion')+'</td><td style="text-align:right">$'+r.total_vigencia.toLocaleString('es-CO')+'</td></tr>';
+            }).join('')+'</tbody></table>'
+            +'<div class="ant-total-bar"><span>Total adeudado</span><span>$'+data.total.toLocaleString('es-CO')+'</span></div>';
         })
+        .catch(function(){btn.disabled=false;resultado.innerHTML='<div class="ant-alert error">Error de conexion.</div>';});
+    });
 
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+  }); // end load
 
+  // ── FUNCIONES GLOBALES ────────────────────────────────────────────────────
 
-@app.route("/retefuente/marcas", methods=["GET"])
-def retefuente_marcas():
-    """Devuelve lista de marcas disponibles para una tabla."""
-    clase      = request.args.get("clase", "").strip().upper()
-    carroceria = request.args.get("carroceria", "").strip().upper()
-    tabla = _tabla_retefuente(clase, carroceria)
-    if not tabla:
-        return jsonify({"error": "Clase no reconocida"}), 400
-    try:
-        conn = get_db_conn()
-        cur  = conn.cursor()
-        cur.execute("SELECT DISTINCT marca FROM retefuente_2026 WHERE tabla=%s ORDER BY marca", (tabla,))
-        marcas = [r[0] for r in cur.fetchall()]
-        cur.close(); conn.close()
-        return jsonify({"marcas": marcas})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+  // ── RETEFUENTE ───────────────────────────────────────────────────────────
+  var antRetAvaluo     = 0;
+  var antRetRetefuente = 0;
 
+  function antCargarRetefuente() {
+    var marca      = (document.getElementById('ant-marca').value || '').trim().toUpperCase();
+    var linea      = (document.getElementById('ant-linea').value || '').trim().toUpperCase();
+    var clase      = (document.getElementById('ant-clase').value || '').trim().toUpperCase();
+    var carroceria = (document.getElementById('ant-carroceria').value || '').trim().toUpperCase();
+    var modelo     = (document.getElementById('ant-modelo').value || '').trim();
 
-@app.route("/tramites/filtros", methods=["GET"])
-def tramites_filtros():
-    try:
-        conn = get_db_conn()
-        cur = conn.cursor()
-        campo        = request.args.get("campo", "")
-        departamento = request.args.get("departamento", "").strip().upper()
-        municipio    = request.args.get("municipio", "").strip().upper()
-        clase        = request.args.get("clase", "").strip().upper()
-        if campo == "departamento":
-            cur.execute("SELECT DISTINCT departamento FROM tramites_transito ORDER BY departamento")
-        elif campo == "municipio" and departamento:
-            cur.execute("SELECT DISTINCT municipio FROM tramites_transito WHERE departamento=%s ORDER BY municipio", (departamento,))
-        elif campo == "clase" and municipio:
-            cur.execute("SELECT DISTINCT clase FROM tramites_transito WHERE municipio=%s ORDER BY clase", (municipio,))
-        elif campo == "tramite" and municipio and clase:
-            cur.execute("SELECT DISTINCT tramite FROM tramites_transito WHERE municipio=%s AND clase=%s ORDER BY tramite", (municipio, clase))
-        else:
-            cur.close(); conn.close()
-            return jsonify({"error": "Parametros insuficientes"}), 400
-        valores = [row[0] for row in cur.fetchall()]
-        cur.close(); conn.close()
-        return jsonify({"valores": valores})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    if (!marca || !clase || !modelo) return;
 
+    var estado = document.getElementById('ant-ret-estado');
+    var opcDiv = document.getElementById('ant-ret-opciones');
+    estado.textContent = 'Buscando...';
+    opcDiv.innerHTML   = '';
+    document.getElementById('ant-ret-resultado').style.display = 'none';
 
-@app.route("/tramites/precio", methods=["GET"])
-def tramites_precio():
-    departamento = request.args.get("departamento", "").strip().upper()
-    municipio    = request.args.get("municipio", "").strip().upper()
-    clase        = request.args.get("clase", "").strip().upper()
-    tramite      = request.args.get("tramite", "").strip().upper()
-    if not all([departamento, municipio, clase, tramite]):
-        return jsonify({"error": "Debes enviar departamento, municipio, clase y tramite"}), 400
-    try:
-        conn = get_db_conn()
-        cur = conn.cursor()
-        cur.execute("SELECT precio FROM tramites_transito WHERE departamento=%s AND municipio=%s AND clase=%s AND tramite=%s LIMIT 1", (departamento, municipio, clase, tramite))
-        row = cur.fetchone()
-        cur.close(); conn.close()
-        if row:
-            return jsonify({"departamento": departamento, "municipio": municipio, "clase": clase, "tramite": tramite, "precio": row[0]})
-        return jsonify({"error": "No se encontro el tramite"}), 404
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    var cilindrada = (document.getElementById('ant-cilindrada').value || '').trim();
+    fetch(ANT_API + '/retefuente/buscar?marca=' + encodeURIComponent(marca)
+      + '&linea=' + encodeURIComponent(linea)
+      + '&clase=' + encodeURIComponent(clase)
+      + '&carroceria=' + encodeURIComponent(carroceria)
+      + '&modelo=' + encodeURIComponent(modelo)
+      + '&cilindraje=' + encodeURIComponent(cilindrada))
+      .then(function(r){ return r.json(); })
+      .then(function(data) {
+        if (data.error) { estado.textContent = 'Error: ' + data.error; return; }
+        if (!data.opciones || data.opciones.length === 0) {
+          estado.textContent = 'No se encontraron resultados para esta marca y clase.';
+          return;
+        }
+        estado.textContent = 'Se encontraron ' + data.opciones.length + ' opciones. Selecciona la que corresponde:';
+        opcDiv.innerHTML = '';
+        data.opciones.forEach(function(op) {
+          var div = document.createElement('div');
+          div.className = 'ant-ret-opcion';
+          div.innerHTML =
+            '<div class="ant-ret-opcion-nombre">' + op.linea + (op.cilindraje ? ' — ' + op.cilindraje + 'cc' : '') + '</div>' +
+            '<div class="ant-ret-opcion-valor">Avalúo: $' + op.avaluo.toLocaleString('es-CO') + '</div>';
+          div.addEventListener('click', function() {
+            document.querySelectorAll('.ant-ret-opcion').forEach(function(el){ el.classList.remove('seleccionada'); });
+            div.classList.add('seleccionada');
+            antRetAvaluo     = op.avaluo;
+            antRetRetefuente = op.retefuente;
+            document.getElementById('ant-ret-linea-sel').textContent = op.linea;
+            document.getElementById('ant-ret-avaluo').textContent    = '$' + op.avaluo.toLocaleString('es-CO');
+            document.getElementById('ant-ret-retefuente').textContent = '$' + op.retefuente.toLocaleString('es-CO');
+            document.getElementById('ant-ret-resultado').style.display = 'block';
+          });
+          opcDiv.appendChild(div);
+        });
+      })
+      .catch(function(e){ estado.textContent = 'Error de conexión.'; });
+  }
 
+  window.antUsarRetefuente = function() {
+    if (!antRetRetefuente) return;
+    setLiq('liq-retefuente', antRetRetefuente);
+    document.getElementById('liq-row-retefuente').style.display = 'grid';
+    antAvaluo = antRetAvaluo;
+    calcularTotal();
+    // Cerrar bloque retefuente
+    document.getElementById('contenido-ret').style.display = 'none';
+    document.getElementById('chevron-ret').textContent = '▼';
+  };
 
-@app.route("/reportar", methods=["POST"])
-def reportar():
-    try:
-        data      = request.get_json()
-        tipo      = data.get("tipo", "").strip()
-        comentario = data.get("comentario", "").strip()
-        placa     = data.get("placa", "").strip().upper()
-        municipio = data.get("municipio", "").strip().upper()
-        pagina    = data.get("pagina", "").strip()
-        if not tipo:
-            return jsonify({"ok": False, "error": "Tipo requerido"}), 400
-        conn = get_db_conn()
-        cur  = conn.cursor()
-        cur.execute("""
-            INSERT INTO reportes_usuarios (tipo, comentario, placa, municipio, pagina)
-            VALUES (%s, %s, %s, %s, %s)
-        """, (tipo, comentario, placa, municipio, pagina))
-        conn.commit()
-        cur.close()
-        conn.close()
-        return jsonify({"ok": True})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+  function recalcularPasos() {
+    var orden = [
+      {id: 'bloque-info',        titulo: 'titulo-info',        nombre: 'INFORMACION'},
+      {id: 'bloque-depto',       titulo: 'titulo-depto',       nombre: 'IMPUESTO DEPARTAMENTAL'},
+      {id: 'bloque-municipal',   titulo: 'titulo-municipal',   nombre: 'IMPUESTO MUNICIPAL'},
+      {id: 'bloque-retefuente',  titulo: 'titulo-ret',         nombre: 'RETEFUENTE'},
+      {id: 'bloque-tramites',    titulo: 'titulo-tramites',    nombre: 'TRAMITES'},
+      {id: 'bloque-liq',         titulo: 'titulo-liq',         nombre: 'LIQUIDACION'},
+    ];
+    var paso = 1;
+    orden.forEach(function(b) {
+      var bl = document.getElementById(b.id);
+      var tit = document.getElementById(b.titulo);
+      if (!bl || !tit) return;
+      var visible = bl.style.display !== 'none' && (bl.classList.contains('visible') || bl.style.display === 'block' || bl.style.cssText.indexOf('display:block') >= 0);
+      if (visible) {
+        tit.textContent = 'PASO ' + paso + ' — ' + b.nombre;
+        paso++;
+      }
+    });
+  }
 
+  window.antToggleBloque = function(id) {
+    var contenido = document.getElementById('contenido-'+id);
+    var chevron   = document.getElementById('chevron-'+id);
+    if (!contenido) return;
+    var visible = contenido.style.display !== 'none';
+    contenido.style.display = visible ? 'none' : 'block';
+    if (chevron) chevron.textContent = visible ? '▼' : '▲';
+  };
 
-@app.route("/reportar/lista", methods=["GET"])
-def reportar_lista():
-    try:
-        conn = get_db_conn()
-        cur  = conn.cursor()
-        cur.execute("""
-            SELECT id, tipo, comentario, placa, municipio, pagina, creado_en
-            FROM reportes_usuarios
-            ORDER BY creado_en DESC
-            LIMIT 100
-        """)
-        rows = cur.fetchall()
-        cur.close()
-        conn.close()
-        return jsonify({"reportes": [{
-            "id": r[0], "tipo": r[1], "comentario": r[2],
-            "placa": r[3], "municipio": r[4], "pagina": r[5],
-            "fecha": str(r[6])
-        } for r in rows]})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+  window.antToggleInfo = function() {
+    var contenido = document.getElementById('ant-info-contenido');
+    var chevron   = document.getElementById('ant-info-chevron');
+    var visible   = contenido.style.display !== 'none';
+    contenido.style.display = visible ? 'none' : 'block';
+    // El resumen colapsado siempre oculto — solo el botón del título
+    document.getElementById('ant-info-colapsado').style.display = 'none';
+    chevron.textContent = visible ? '▼' : '▲';
+  };
 
+  window.antConfirmarInfo = function() {
+    var placa     = document.getElementById('ant-placa').value.trim().toUpperCase();
+    var municipio = document.getElementById('ant-municipio').value;
 
-@app.route("/reportar/eliminar/<int:reporte_id>", methods=["DELETE"])
-def reportar_eliminar(reporte_id):
-    try:
-        conn = get_db_conn()
-        cur  = conn.cursor()
-        cur.execute("DELETE FROM reportes_usuarios WHERE id = %s", (reporte_id,))
-        conn.commit()
-        cur.close()
-        conn.close()
-        return jsonify({"ok": True})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+    infoConfirmada = true;
 
+    // 1. Guardar en cache
+    if (placa && municipio) {
+      fetch(ANT_API+'/ocr-guardar-municipio', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({placa: placa, municipio: municipio})
+      }).catch(function(){});
+    }
 
-@app.route("/debug-env", methods=["GET"])
-def debug_env():
-    return jsonify({"DATABASE_URL": os.environ.get("DATABASE_URL", "NO EXISTE"), "ANTHROPIC_API_KEY": os.environ.get("ANTHROPIC_API_KEY", "NO EXISTE")})
+    // 2. Colapsar informacion completamente
+    document.getElementById('ant-info-contenido').style.display = 'none';
+    document.getElementById('ant-info-colapsado').style.display = 'none';
+    document.getElementById('ant-info-chevron').textContent = '▼';
 
+    // 3. Ocultar mensaje OCR y selector de municipio
+    document.getElementById('ant-ocr-status').style.display = 'none';
+    document.getElementById('ant-municipio-wrap').style.display = 'none';
 
-@app.route("/ocr-tarjeta", methods=["POST"])
-def ocr_tarjeta():
-    try:
-        data = request.get_json()
-        if not data or "imagen" not in data:
-            return jsonify({"error": "No se recibio imagen"}), 400
-        img_data   = data["imagen"]
-        media_type = "image/jpeg"
-        if "data:image/png" in img_data:
-            media_type = "image/png"
-        elif "data:image/webp" in img_data:
-            media_type = "image/webp"
-        if "," in img_data:
-            img_data = img_data.split(",")[1]
-        import hashlib
-        hash_imagen = hashlib.sha256(img_data.encode()).hexdigest()
-        conn = get_db_conn()
-        cur = conn.cursor()
-        cur.execute("SELECT placa, marca, linea, modelo, clase, servicio, capacidad, cilindrada, carroceria, tipo_documento, cedula, apellidos, municipio FROM cache_tarjetas WHERE hash_imagen = %s", (hash_imagen,))
-        row = cur.fetchone()
-        if row:
-            cur.close(); conn.close()
-            return jsonify({"placa": row[0] or "", "marca": row[1] or "", "linea": row[2] or "", "modelo": row[3] or "", "clase": row[4] or "", "servicio": row[5] or "", "capacidad": row[6] or "", "cilindrada": row[7] or "", "carroceria": row[8] or "", "tipo_documento": row[9] or "", "cedula": row[10] or "", "apellidos": row[11] or "", "municipio": row[12] or "", "desde_cache": True})
-        cur.close(); conn.close()
-        anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
-        if not anthropic_key:
-            return jsonify({"error": "API Key de Anthropic no configurada"}), 500
-        response = requests.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={"x-api-key": anthropic_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
-            json={"model": "claude-opus-4-5", "max_tokens": 600, "messages": [{"role": "user", "content": [
-                {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": img_data}},
-                {"type": "text", "text": "Eres un experto en leer tarjetas de propiedad de vehiculos colombianos. La imagen puede estar en cualquier orientacion. Analiza TODOS los caracteres con mucho cuidado especialmente los numeros. Extrae: 1. PLACA (exactamente 3 letras + 3 numeros, verifica cada caracter) 2. MARCA del vehiculo 3. LINEA del vehiculo 4. MODELO (anno 4 digitos) 5. CLASE (automovil, motocicleta, campero, camioneta, etc) 6. SERVICIO (particular, publico, oficial) 7. CAPACIDAD (numero de pasajeros o carga) 8. CILINDRADA (numero en cc) 9. TIPO_DOCUMENTO (uno de: C.C, NIT, P.P.T, T.I, R.C - aparece debajo de IDENTIFICACION al lado izquierdo del numero) 10. CEDULA (numero de identificacion, verifica TODOS los digitos uno por uno, no omitas ninguno) 11. APELLIDOS del propietario. Responde SOLO en JSON sin explicaciones: {\"placa\": \"\", \"marca\": \"\", \"linea\": \"\", \"modelo\": \"\", \"clase\": \"\", \"servicio\": \"\", \"capacidad\": \"\", \"cilindrada\": \"\", \"carroceria\": \"\", \"tipo_documento\": \"\", \"cedula\": \"\", \"apellidos\": \"\"}"}
-            ]}]},
-            timeout=120
-        )
-        if response.status_code != 200:
-            return jsonify({"error": f"Error Claude API: {response.status_code}"}), 500
-        resp_data = response.json()
-        texto = resp_data["content"][0]["text"].strip()
-        import json as json_lib, re as re_module
-        texto_clean = texto.replace("```json", "").replace("```", "").strip()
-        json_match = re_module.search(r'\{[^{}]*\}', texto_clean, re_module.DOTALL)
-        if not json_match:
-            return jsonify({"error": "No se pudo parsear respuesta de Claude"}), 500
-        resultado = json_lib.loads(json_match.group())
-        placa          = resultado.get("placa", "").upper().replace(" ", "").replace("-", "")
-        marca          = resultado.get("marca", "").upper().strip()
-        linea          = resultado.get("linea", "").upper().strip()
-        modelo         = resultado.get("modelo", "").strip()
-        clase          = resultado.get("clase", "").upper().strip()
-        servicio       = resultado.get("servicio", "").upper().strip()
-        capacidad      = resultado.get("capacidad", "").strip()
-        cilindrada     = resultado.get("cilindrada", "").strip()
-        carroceria     = resultado.get("carroceria", "").upper().strip()
-        tipo_documento = resultado.get("tipo_documento", "").upper().strip()
-        cedula         = resultado.get("cedula", "").strip()
-        apellidos      = resultado.get("apellidos", "").upper().strip()
-        try:
-            conn2 = get_db_conn()
-            cur2  = conn2.cursor()
-            if placa:
-                cur2.execute("DELETE FROM cache_tarjetas WHERE placa = %s AND hash_imagen != %s", (placa, hash_imagen))
-            cur2.execute("""
-                INSERT INTO cache_tarjetas (hash_imagen, placa, marca, linea, modelo, clase, servicio, capacidad, cilindrada, tipo_documento, cedula, apellidos, municipio)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                ON CONFLICT (hash_imagen) DO UPDATE SET placa=EXCLUDED.placa, marca=EXCLUDED.marca, linea=EXCLUDED.linea, modelo=EXCLUDED.modelo, clase=EXCLUDED.clase, servicio=EXCLUDED.servicio, capacidad=EXCLUDED.capacidad, cilindrada=EXCLUDED.cilindrada, tipo_documento=EXCLUDED.tipo_documento, cedula=EXCLUDED.cedula, apellidos=EXCLUDED.apellidos, actualizado_en=NOW()
-            """, (hash_imagen, placa, marca, linea, modelo, clase, servicio, capacidad, cilindrada, tipo_documento, cedula, apellidos, ""))
-            conn2.commit()
-            cur2.close()
-            conn2.close()
-        except Exception as e_cache:
-            print(f"Error cache tarjeta: {e_cache}")
-        return jsonify({"placa": placa, "marca": marca, "linea": linea, "modelo": modelo, "clase": clase, "servicio": servicio, "capacidad": capacidad, "cilindrada": cilindrada, "carroceria": carroceria, "tipo_documento": tipo_documento, "cedula": cedula, "apellidos": apellidos, "municipio": "", "desde_cache": False})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    // 4. Mostrar todos los bloques expandidos
+    mostrarYExpandirBloques();
+    cargarTramites();
+    mostrarFilasDefecto();
 
 
-@app.route("/ocr-guardar-municipio", methods=["POST"])
-def ocr_guardar_municipio():
-    try:
-        data      = request.get_json()
-        placa     = data.get("placa", "").upper().strip()
-        municipio = data.get("municipio", "").upper().strip()
-        if not placa or not municipio:
-            return jsonify({"ok": False}), 400
-        conn = get_db_conn()
-        cur  = conn.cursor()
-        cur.execute("UPDATE cache_tarjetas SET municipio=%s, actualizado_en=NOW() WHERE placa=%s", (municipio, placa))
-        conn.commit()
-        cur.close()
-        conn.close()
-        return jsonify({"ok": True})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+  };
 
+  window.antConfirmarMunicipio = function(confirmado) {
+    if (confirmado) {
+      antMunicipioActual = document.getElementById('ant-municipio').value;
+      var munInfo = document.getElementById('ant-municipio-info');
+      if (munInfo) munInfo.value = antMunicipioActual;
+      var placaMun = document.getElementById('ant-placa-municipio');
+      if (placaMun) placaMun.textContent = antMunicipioActual;
+      document.getElementById('ant-mun-confirm').style.display = 'none';
+      document.getElementById('ant-ocr-status').style.display = 'none';
+      actualizarVisibilidad();
+      cargarTramites();
+      mostrarFilasDefecto();
+    } else {
+      document.getElementById('ant-mun-confirm').style.display = 'none';
+      document.getElementById('ant-mun-label').style.display   = 'block';
+      document.getElementById('ant-mun-campo').style.display   = 'block';
+      document.getElementById('ant-municipio-input').value = '';
+      document.getElementById('ant-municipio').value       = '';
+      document.getElementById('ant-municipio-input').focus();
+      ['bloque-info','bloque-tramites','bloque-depto','bloque-municipal'].forEach(function(id) {
+        document.getElementById(id).classList.remove('visible');
+      });
+      document.getElementById('bloque-liq').style.display = 'none';
+    }
+  };
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080)
+  window.antEnviarWA = function() {
+    var canvas = document.getElementById('ant-canvas-liq');
+    var ctx    = canvas.getContext('2d');
+    var W      = 800;
+    var filas  = [];
+
+    [1,2,3].forEach(function(n) {
+      var row = document.getElementById('liq-row-tramite'+n);
+      if (row && row.style.display !== 'none') {
+        var label = document.getElementById('liq-label-tramite'+n);
+        var val   = parseLiq('liq-tramite'+n);
+        if (val > 0) filas.push({label: label ? label.textContent : 'Tramite '+n, valor: val});
+      }
+    });
+
+    var rowRef = document.getElementById('liq-row-retefuente');
+    if (rowRef && rowRef.style.display !== 'none') {
+      var vRef = parseLiq('liq-retefuente');
+      if (vRef > 0) filas.push({label:'Retefuente (1% avaluo)', valor: vRef});
+    }
+
+    [{id:'liq-depto',label:'Impuesto Departamental'},{id:'liq-municipal',label:'Impuesto Municipal'},
+     {id:'liq-pazsalvo',label:'Paz y Salvo'},{id:'liq-envios',label:'Envios y/o Domicilios'},
+     {id:'liq-honorarios',label:'Honorarios'}
+    ].forEach(function(c) {
+      var v = parseLiq(c.id);
+      if (v > 0) filas.push({label: c.label, valor: v});
+    });
+    // Cobros dinámicos — solo si tienen valor
+    for (var ci = 1; ci <= antCobrosCount; ci++) {
+      var cobroValEl    = document.getElementById('liq-cobro-valor-'+ci);
+      var cobroNombreEl = document.getElementById('liq-cobro-nombre-'+ci);
+      if (cobroValEl) {
+        var cobroVal = parseInt((cobroValEl.value||'0').replace(/\D/g,''),10)||0;
+        if (cobroVal > 0) {
+          var cobroNombre = (cobroNombreEl && cobroNombreEl.value.trim()) ? cobroNombreEl.value.trim() : 'Otros Cobros';
+          filas.push({label: cobroNombre, valor: cobroVal});
+        }
+      }
+    }
+
+    if (filas.length === 0) { alert('No hay items en la liquidacion.'); return; }
+
+    var total    = filas.reduce(function(s,f){return s+f.valor;},0);
+    var placa    = (document.getElementById('ant-placa').value||'').toUpperCase()||'SIN PLACA';
+    var municipio = antMunicipioActual || '';
+    var fecha    = new Date().toLocaleDateString('es-CO',{day:'2-digit',month:'long',year:'numeric'});
+
+    // Obtener nombres de tramites seleccionados
+    var tramitesNombres = [];
+    [1,2,3].forEach(function(n) {
+      var inp = document.getElementById('ant-tramite-'+n);
+      if (inp && inp.value.trim()) tramitesNombres.push(inp.value.trim());
+    });
+    var tituloTramites = tramitesNombres.length > 0 ? tramitesNombres.join(' + ') : 'Liquidacion';
+    var tituloCompleto = 'Tramy ' + tituloTramites + (municipio ? ' - ' + municipio : '');
+
+    var PAD=40, ROW_H=44, HDR_H=100, TTL_H=64, FTR_H=70;
+    var H = HDR_H+20+(filas.length*ROW_H)+16+TTL_H+FTR_H+PAD;
+    canvas.width=W; canvas.height=H;
+
+    ctx.fillStyle='#ffffff'; ctx.fillRect(0,0,W,H);
+
+    // Header
+    ctx.fillStyle='#0047AB'; ctx.fillRect(0,0,W,HDR_H);
+    ctx.font='bold 36px Arial'; ctx.fillStyle='#ffffff'; ctx.textAlign='left';
+    ctx.fillText('TRAMY',PAD,52);
+    ctx.textAlign='right';
+    ctx.font='bold 17px Arial'; ctx.fillStyle='#ffffff';
+    ctx.fillText('Placa: '+placa, W-PAD, 44);
+    if (municipio) {
+      ctx.font='13px Arial'; ctx.fillStyle='rgba(255,255,255,0.85)';
+      ctx.fillText(municipio, W-PAD, 64);
+    }
+    ctx.font='13px Arial'; ctx.fillStyle='rgba(255,255,255,0.7)';
+    ctx.fillText(fecha, W-PAD, 84);
+    ctx.textAlign='left';
+
+    // Filas
+    var y=HDR_H+28;
+    filas.forEach(function(fila,i) {
+      if (i%2===0) { ctx.fillStyle='#f4f8ff'; ctx.fillRect(PAD-10,y-26,W-(PAD-10)*2,ROW_H); }
+      ctx.font='14px Arial'; ctx.fillStyle='#333333'; ctx.fillText(fila.label,PAD,y);
+      ctx.font='bold 14px Arial'; ctx.fillStyle='#1a2340'; ctx.textAlign='right';
+      ctx.fillText('$ '+fila.valor.toLocaleString('es-CO'),W-PAD,y);
+      ctx.textAlign='left'; y+=ROW_H;
+    });
+
+    // Nota de autenticacion si aplica
+    var notaAuth = generarNotaAutenticacion();
+    if (notaAuth) {
+      // Fondo de la nota
+      var notaLineas = [];
+      var maxAncho = W - (PAD*2) - 20;
+      ctx.font = '11px Arial';
+      // Dividir texto en líneas que quepan
+      var palabras = notaAuth.split(' ');
+      var lineaActual = '';
+      palabras.forEach(function(palabra) {
+        var prueba = lineaActual ? lineaActual + ' ' + palabra : palabra;
+        if (ctx.measureText(prueba).width > maxAncho) {
+          notaLineas.push(lineaActual);
+          lineaActual = palabra;
+        } else {
+          lineaActual = prueba;
+        }
+      });
+      if (lineaActual) notaLineas.push(lineaActual);
+
+      var notaH = 16 + (notaLineas.length * 16) + 10;
+      ctx.fillStyle = '#fff8e1';
+      ctx.fillRect(PAD-10, y+4, W-(PAD-10)*2, notaH);
+      ctx.strokeStyle = '#ffc107'; ctx.lineWidth = 1;
+      ctx.strokeRect(PAD-10, y+4, W-(PAD-10)*2, notaH);
+      ctx.font = 'bold 11px Arial'; ctx.fillStyle = '#856404'; ctx.textAlign = 'left';
+      var ny = y + 18;
+      notaLineas.forEach(function(linea, i) {
+        if (i === 0) {
+          ctx.font = 'bold 11px Arial';
+        } else {
+          ctx.font = '11px Arial';
+        }
+        ctx.fillText(linea, PAD, ny);
+        ny += 16;
+      });
+      ctx.textAlign = 'left';
+      y += notaH + 12;
+    }
+
+    // Total
+    y+=8; ctx.strokeStyle='#0047AB'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.moveTo(PAD,y); ctx.lineTo(W-PAD,y); ctx.stroke(); y+=14;
+    ctx.fillStyle='#0047AB'; ctx.fillRect(PAD-10,y-26,W-(PAD-10)*2,TTL_H);
+    ctx.font='bold 15px Arial'; ctx.fillStyle='rgba(255,255,255,0.85)'; ctx.fillText('TOTAL',PAD,y+4);
+    ctx.font='bold 26px Arial'; ctx.fillStyle='#ffffff'; ctx.textAlign='right';
+    ctx.fillText('$ '+total.toLocaleString('es-CO'),W-PAD,y+4);
+    ctx.textAlign='left'; y+=TTL_H+12;
+
+    // Pie de página
+    ctx.fillStyle='#f0f4ff'; ctx.fillRect(0,H-FTR_H,W,FTR_H);
+    ctx.font='bold 13px Arial'; ctx.fillStyle='#0047AB'; ctx.textAlign='center';
+    ctx.fillText('Tramy - Liquidador de tramites de transito',W/2,H-FTR_H+22);
+    ctx.font='11px Arial'; ctx.fillStyle='#888888';
+    ctx.fillText('Documento informativo. Los valores pueden cambiar por concepto de intereses u otros',W/2,H-FTR_H+42);
+    ctx.fillText('conceptos relacionados con las entidades de movilidad.',W/2,H-FTR_H+58);
+
+    // Marca de agua
+    ctx.save(); ctx.translate(W/2,H/2); ctx.rotate(-Math.PI/6);
+    ctx.font='bold 80px Arial'; ctx.fillStyle='rgba(0,71,171,0.04)'; ctx.textAlign='center';
+    ctx.fillText('TRAMY',0,0); ctx.restore();
+
+    var dataUrl = canvas.toDataURL('image/png');
+    document.getElementById('ant-wa-img').src = dataUrl;
+    document.getElementById('ant-wa-preview').style.display = 'block';
+
+    var textoWA = tituloCompleto + ' - Placa: ' + placa + ' - Total: $' + total.toLocaleString('es-CO') + ' - Generado por Tramy';
+
+    if (navigator.share && navigator.canShare) {
+      canvas.toBlob(function(blob) {
+        var file = new File([blob],'liquidacion_'+placa+'.png',{type:'image/png'});
+        if (navigator.canShare({files:[file]})) {
+          navigator.share({title: tituloCompleto, text: textoWA, files:[file]})
+            .catch(function(){ window.open('https://wa.me/?text='+encodeURIComponent(textoWA),'_blank'); });
+        } else { window.open('https://wa.me/?text='+encodeURIComponent(textoWA),'_blank'); }
+      });
+    } else {
+      var link = document.createElement('a');
+      link.download = 'liquidacion_'+placa+'.png';
+      link.href = dataUrl; link.click();
+    }
+  };
+
+  // ── REPORTE ──────────────────────────────────────────────────────────────
+  var antReporteTipo = '';
+
+  window.antToggleReporte = function() {
+    var panel = document.getElementById('ant-reporte-panel');
+    panel.style.display = panel.style.display === 'block' ? 'none' : 'block';
+    document.getElementById('ant-reporte-ok').style.display = 'none';
+    document.getElementById('ant-reporte-texto').value = '';
+    document.querySelectorAll('.ant-reporte-opcion').forEach(function(el){ el.classList.remove('sel'); });
+    antReporteTipo = '';
+  };
+
+  window.antSelOpcion = function(el, tipo) {
+    document.querySelectorAll('.ant-reporte-opcion').forEach(function(e){ e.classList.remove('sel'); });
+    el.classList.add('sel');
+    antReporteTipo = tipo;
+  };
+
+  window.antEnviarReporte = function() {
+    if (!antReporteTipo) { alert('Selecciona qué está pasando.'); return; }
+    var comentario  = document.getElementById('ant-reporte-texto').value.trim();
+    var placaEl     = document.getElementById('ant-placa');
+    var placa       = placaEl ? placaEl.value.trim() : '';
+    var tipoGuardar = antReporteTipo; // guardar antes de resetear
+
+    // Enviar primero
+    fetch(ANT_API + '/reportar', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        tipo:       tipoGuardar,
+        comentario: comentario,
+        placa:      placa,
+        municipio:  antMunicipioActual || '',
+        pagina:     window.location.href
+      })
+    }).catch(function(){});
+
+    // Mostrar confirmación inmediatamente
+    antReporteTipo = '';
+    document.getElementById('ant-reporte-ok').style.display = 'block';
+    setTimeout(function(){
+      document.getElementById('ant-reporte-panel').style.display = 'none';
+      document.getElementById('ant-reporte-ok').style.display = 'none';
+    }, 1500);
+  };
+
+})();
+</script>
