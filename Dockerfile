@@ -1,5 +1,3 @@
-Copiar
-
 FROM mcr.microsoft.com/playwright/python:v1.59.0-jammy
 WORKDIR /app
 RUN apt-get update && apt-get install -y --fix-missing tesseract-ocr tesseract-ocr-spa || apt-get install -y --fix-missing tesseract-ocr tesseract-ocr-spa
