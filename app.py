@@ -5,6 +5,8 @@ import os
 import psycopg2
 import re
 import time
+import uuid
+import json
 import requests
 import threading
 from datetime import datetime
@@ -51,6 +53,47 @@ ANTIOQUIA_LIMITE_VIGENCIAS = 10
 
 def get_db_conn():
     return psycopg2.connect(os.environ["DATABASE_URL"])
+
+
+def job_actualizar(job_id, mensaje, estado='procesando'):
+    try:
+        conn = get_db_conn()
+        cur  = conn.cursor()
+        cur.execute("""
+            INSERT INTO consulta_jobs (job_id, estado, mensaje, actualizado_en)
+            VALUES (%s, %s, %s, NOW())
+            ON CONFLICT (job_id) DO UPDATE SET estado=%s, mensaje=%s, actualizado_en=NOW()
+        """, (job_id, estado, mensaje, estado, mensaje))
+        conn.commit()
+        cur.close(); conn.close()
+    except Exception as e:
+        print(f"Error job: {e}")
+
+def job_terminar(job_id, resultado):
+    try:
+        conn = get_db_conn()
+        cur  = conn.cursor()
+        cur.execute("""
+            UPDATE consulta_jobs SET estado='listo', mensaje='Consulta finalizada.', resultado=%s, actualizado_en=NOW()
+            WHERE job_id=%s
+        """, (json.dumps(resultado), job_id))
+        conn.commit()
+        cur.close(); conn.close()
+    except Exception as e:
+        print(f"Error job terminar: {e}")
+
+def job_error(job_id, mensaje_error):
+    try:
+        conn = get_db_conn()
+        cur  = conn.cursor()
+        cur.execute("""
+            UPDATE consulta_jobs SET estado='error', mensaje=%s, actualizado_en=NOW()
+            WHERE job_id=%s
+        """, (mensaje_error, job_id))
+        conn.commit()
+        cur.close(); conn.close()
+    except Exception as e:
+        print(f"Error job error: {e}")
 
 
 def bloquear_recursos(page):
@@ -483,7 +526,7 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento_abrev,
                         modelo, municipio_transito, apellidos_propietario,
                         celular="3000000000", email="consulta@consulta.com",
                         direccion="CRA", municipio="MEDELLIN",
-                        municipio_cod=5001000, departamento_cod=5):
+                        municipio_cod=5001000, departamento_cod=5, job_id=None):
     """
     Proceso completo para Antioquia.
     Retorna (registros, total, avaluo, estado_vehiculo, excede_limite).
@@ -500,6 +543,8 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento_abrev,
     if tipo_documento_id == "2":
         identificacion = str(identificacion) + str(_calcular_digito_nit(identificacion))
 
+    if job_id:
+        job_actualizar(job_id, "Estoy ingresando a la página de la Gobernación de Antioquia...")
     print(f"\n  → Consultando primer bloque de datos ({placa})...")
     session0, token0, data3 = _sesion_antioquia(
         placa, identificacion, tipo_documento_id,
@@ -510,6 +555,11 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento_abrev,
     vigencias_adeudadas = data3.get("listaVigenciasAdeudas", [])
     avaluo              = estado_veh.get("avaluoComercial", 0) or 0
     print(f"  → Vigencias adeudadas encontradas: {len(vigencias_adeudadas)}")
+    if job_id:
+        if not vigencias_adeudadas:
+            job_actualizar(job_id, "Este vehículo está a paz y salvo con la Gobernación de Antioquia.")
+        else:
+            job_actualizar(job_id, f"Encontré {len(vigencias_adeudadas)} año(s) con impuesto pendiente. Consultando valores...")
 
     # Paz y salvo
     if not vigencias_adeudadas:
@@ -529,6 +579,8 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento_abrev,
 
     for v in vigencias_a_consultar:
         anio = v.get("vigencia")
+        if job_id:
+            job_actualizar(job_id, f"Estoy consultando el impuesto del año {anio}...")
         print(f"\n  → Consultando vigencia {anio}...")
 
         total_pagar  = None
@@ -558,6 +610,8 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento_abrev,
                 avaluo_vig  = data_vig.get("avaluoComercial", 0) or 0
                 if total_pagar is not None:
                     print(f"  ✔ Vigencia {anio}: ${total_pagar:,}")
+                    if job_id:
+                        job_actualizar(job_id, f"Año {anio}: impuesto es ${total_pagar:,}. Continuando...")
                     break
             except Exception as e:
                 print(f"  ✖ Error vigencia {anio} intento {intento}: {e}")
@@ -618,67 +672,39 @@ def consultar():
         if not identificacion or not modelo or not municipio_transito or not apellidos:
             return jsonify({"error": "Para Antioquia debes proporcionar: identificacion, modelo, municipio_transito, apellidos_propietario."}), 400
 
-    resultado       = {}
-    error_container = {}
+    # Municipios síncronos
+    if municipio != "antioquia":
+        resultado       = {}
+        error_container = {}
 
-    def ejecutar():
-        try:
-            with sync_playwright() as playwright:
-                browser = playwright.chromium.launch(headless=True, args=[
-                    "--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu",
-                    "--single-process", "--no-zygote", "--disable-setuid-sandbox"
-                ])
-                context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-                page = context.new_page()
-
-                if municipio == "antioquia":
-                    registros, total, avaluo, estado_veh, excede = consultar_antioquia(
-                        page, placa, identificacion, tipo_documento,
-                        modelo, municipio_transito, apellidos,
-                        celular, email, direccion, mun_declarante,
-                        municipio_cod, departamento_cod
-                    )
-                    resultado['registros']  = registros
-                    resultado['total']      = total
-                    resultado['avaluo']     = avaluo
-                    resultado['excede']     = excede
-                    resultado['retefuente'] = round(avaluo / 100) if avaluo else 0
-                    resultado['placa_info'] = {
-                        "marca":       estado_veh.get("marca", ""),
-                        "linea":       estado_veh.get("linea", ""),
-                        "modelo":      estado_veh.get("modelo", ""),
-                        "propietario": estado_veh.get("nombrePropietario", ""),
-                    }
-                else:
+        def ejecutar_mun():
+            try:
+                with sync_playwright() as playwright:
+                    browser = playwright.chromium.launch(headless=True, args=[
+                        "--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu",
+                        "--single-process", "--no-zygote", "--disable-setuid-sandbox"
+                    ])
+                    context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                    page = context.new_page()
                     if municipio not in ["bello", "sabaneta", "laestrella"]:
                         bloquear_recursos(page)
                     funcion = MUNICIPIOS[municipio]
                     registros, total = funcion(page, placa)
                     resultado['registros'] = registros
                     resultado['total']     = total
+                    context.close(); browser.close()
+            except Exception as e:
+                error_container['error'] = str(e)
+                print(traceback.format_exc(), flush=True)
 
-                context.close()
-                browser.close()
-        except Exception as e:
-            error_container['error'] = str(e)
-            print(traceback.format_exc(), flush=True)
+        hilo = threading.Thread(target=ejecutar_mun)
+        hilo.start()
+        hilo.join(timeout=620)
 
-    hilo = threading.Thread(target=ejecutar)
-    hilo.start()
-    hilo.join(timeout=620)
-
-    if hilo.is_alive():
-        return jsonify({"error": "La consulta tardo demasiado. Intenta de nuevo."}), 504
-
-    if error_container:
-        error = error_container['error'].lower()
-        if any(x in error for x in ["net::err_internet_disconnected", "net::err_name_not_resolved",
-                                     "net::err_connection_refused", "net::err_connection_timed_out",
-                                     "net::err_connection_reset", "net::err_aborted"]):
-            return jsonify({"error": f"No se pudo conectar al portal de {municipio}. Intenta mas tarde."}), 503
-        return jsonify({"error": error_container['error']}), 500
-
-    if municipio != "antioquia":
+        if hilo.is_alive():
+            return jsonify({"error": "La consulta tardo demasiado. Intenta de nuevo."}), 504
+        if error_container:
+            return jsonify({"error": error_container['error']}), 500
         return jsonify({
             "placa":     placa,
             "municipio": municipio,
@@ -687,23 +713,79 @@ def consultar():
             "sin_deuda": resultado.get('total', 0) == 0
         })
 
-    excede    = resultado.get('excede', False)
-    registros = resultado.get('registros', [])
-    total     = resultado.get('total', 0)
-    respuesta = {
-        "placa":      placa,
-        "municipio":  "antioquia",
-        "placa_info": resultado.get('placa_info', {}),
-        "registros":  registros,
-        "total":      total,
-        "avaluo":     resultado.get('avaluo', 0),
-        "retefuente": resultado.get('retefuente', 0),
-        "sin_deuda":  len(registros) == 0,
-    }
-    if excede:
-        respuesta["excede_limite"]  = True
-        respuesta["mensaje_limite"] = f"El límite de consulta es de {ANTIOQUIA_LIMITE_VIGENCIAS} vigencias. Comunícate con un asesor de la Gobernación de Antioquia al 6044444666."
-    return jsonify(respuesta)
+    # Antioquia — sistema asíncrono
+    job_id = str(uuid.uuid4())[:12]
+    job_actualizar(job_id, "Iniciando consulta...", "procesando")
+
+    def ejecutar_antioquia():
+        try:
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch(headless=True, args=[
+                    "--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu",
+                    "--single-process", "--no-zygote", "--disable-setuid-sandbox"
+                ])
+                context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                page = context.new_page()
+                registros, total, avaluo, estado_veh, excede = consultar_antioquia(
+                    page, placa, identificacion, tipo_documento,
+                    modelo, municipio_transito, apellidos,
+                    celular, email, direccion, mun_declarante,
+                    municipio_cod, departamento_cod, job_id=job_id
+                )
+                context.close(); browser.close()
+
+            respuesta = {
+                "placa":      placa,
+                "municipio":  "antioquia",
+                "placa_info": {
+                    "marca":       estado_veh.get("marca", ""),
+                    "linea":       estado_veh.get("linea", ""),
+                    "modelo":      estado_veh.get("modelo", ""),
+                    "propietario": estado_veh.get("nombrePropietario", ""),
+                },
+                "registros":  registros,
+                "total":      total,
+                "avaluo":     avaluo,
+                "retefuente": round(avaluo / 100) if avaluo else 0,
+                "sin_deuda":  len(registros) == 0,
+            }
+            if excede:
+                respuesta["excede_limite"]  = True
+                respuesta["mensaje_limite"] = f"El límite de consulta es de {ANTIOQUIA_LIMITE_VIGENCIAS} vigencias. Comunícate con un asesor de la Gobernación de Antioquia al 6044444666."
+            job_terminar(job_id, respuesta)
+        except Exception as e:
+            print(traceback.format_exc(), flush=True)
+            msg = str(e)
+            if any(x in msg.lower() for x in ["net::err", "connection"]):
+                msg = "No se pudo conectar al portal de Antioquia. Intenta más tarde."
+            job_error(job_id, msg)
+
+    threading.Thread(target=ejecutar_antioquia, daemon=True).start()
+    return jsonify({"job_id": job_id, "estado": "procesando"})
+
+
+@app.route("/consultar/estado", methods=["GET"])
+def consultar_estado():
+    job_id = request.args.get("job_id", "").strip()
+    if not job_id:
+        return jsonify({"error": "Falta job_id"}), 400
+    try:
+        conn = get_db_conn()
+        cur  = conn.cursor()
+        cur.execute("SELECT estado, mensaje, resultado FROM consulta_jobs WHERE job_id=%s", (job_id,))
+        row = cur.fetchone()
+        cur.close(); conn.close()
+        if not row:
+            return jsonify({"estado": "no_encontrado"})
+        estado, mensaje, resultado = row
+        resp = {"estado": estado, "mensaje": mensaje}
+        if estado == "listo" and resultado:
+            resp["resultado"] = resultado
+        elif estado == "error":
+            resp["error"] = mensaje
+        return jsonify(resp)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 # ============================================================
