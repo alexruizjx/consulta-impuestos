@@ -618,15 +618,6 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento_abrev,
                 avaluo_vig  = data_vig.get("avaluoComercial", 0) or 0
                 if total_pagar is not None:
                     print(f"  ✔ Vigencia {anio}: ${total_pagar:,}")
-                    if job_id:
-                        registros_hasta_ahora = registros + [{
-                            "vigencia": str(anio),
-                            "estado": "Pendiente de pago",
-                            "total_vigencia": total_pagar,
-                        }]
-                        job_actualizar(job_id,
-                            f"Año {anio}: impuesto es ${total_pagar:,}. Continuando...",
-                            datos_parciales=registros_hasta_ahora)
                     break
             except Exception as e:
                 print(f"  ✖ Error vigencia {anio} intento {intento}: {e}")
@@ -643,6 +634,11 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento_abrev,
             "estado":         "Pendiente de pago",
             "total_vigencia": total_pagar,
         })
+
+        if job_id and total_pagar is not None:
+            job_actualizar(job_id,
+                f"Año {anio}: impuesto es ${total_pagar:,}. Continuando...",
+                datos_parciales=list(registros))
 
     print(f"\n  ✔ ¡Consulta Antioquia finalizada!")
     return registros, total_suma, avaluo_actual or avaluo, estado_veh, excede_limite
