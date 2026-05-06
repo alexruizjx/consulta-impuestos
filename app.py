@@ -55,15 +55,23 @@ def get_db_conn():
     return psycopg2.connect(os.environ["DATABASE_URL"])
 
 
-def job_actualizar(job_id, mensaje, estado='procesando'):
+def job_actualizar(job_id, mensaje, estado='procesando', datos_parciales=None):
     try:
         conn = get_db_conn()
         cur  = conn.cursor()
-        cur.execute("""
-            INSERT INTO consulta_jobs (job_id, estado, mensaje, actualizado_en)
-            VALUES (%s, %s, %s, NOW())
-            ON CONFLICT (job_id) DO UPDATE SET estado=%s, mensaje=%s, actualizado_en=NOW()
-        """, (job_id, estado, mensaje, estado, mensaje))
+        if datos_parciales is not None:
+            cur.execute("""
+                INSERT INTO consulta_jobs (job_id, estado, mensaje, resultado, actualizado_en)
+                VALUES (%s, %s, %s, %s, NOW())
+                ON CONFLICT (job_id) DO UPDATE SET estado=%s, mensaje=%s, resultado=%s, actualizado_en=NOW()
+            """, (job_id, estado, mensaje, json.dumps({"parcial": datos_parciales}),
+                  estado, mensaje, json.dumps({"parcial": datos_parciales})))
+        else:
+            cur.execute("""
+                INSERT INTO consulta_jobs (job_id, estado, mensaje, actualizado_en)
+                VALUES (%s, %s, %s, NOW())
+                ON CONFLICT (job_id) DO UPDATE SET estado=%s, mensaje=%s, actualizado_en=NOW()
+            """, (job_id, estado, mensaje, estado, mensaje))
         conn.commit()
         cur.close(); conn.close()
     except Exception as e:
@@ -611,7 +619,14 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento_abrev,
                 if total_pagar is not None:
                     print(f"  ✔ Vigencia {anio}: ${total_pagar:,}")
                     if job_id:
-                        job_actualizar(job_id, f"Año {anio}: impuesto es ${total_pagar:,}. Continuando...")
+                        registros_hasta_ahora = registros + [{
+                            "vigencia": str(anio),
+                            "estado": "Pendiente de pago",
+                            "total_vigencia": total_pagar,
+                        }]
+                        job_actualizar(job_id,
+                            f"Año {anio}: impuesto es ${total_pagar:,}. Continuando...",
+                            datos_parciales=registros_hasta_ahora)
                     break
             except Exception as e:
                 print(f"  ✖ Error vigencia {anio} intento {intento}: {e}")
