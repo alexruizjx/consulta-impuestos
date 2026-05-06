@@ -55,23 +55,15 @@ def get_db_conn():
     return psycopg2.connect(os.environ["DATABASE_URL"])
 
 
-def job_actualizar(job_id, mensaje, estado='procesando', datos_parciales=None):
+def job_actualizar(job_id, mensaje, estado='procesando'):
     try:
         conn = get_db_conn()
         cur  = conn.cursor()
-        if datos_parciales is not None:
-            cur.execute("""
-                INSERT INTO consulta_jobs (job_id, estado, mensaje, resultado, actualizado_en)
-                VALUES (%s, %s, %s, %s, NOW())
-                ON CONFLICT (job_id) DO UPDATE SET estado=%s, mensaje=%s, resultado=%s, actualizado_en=NOW()
-            """, (job_id, estado, mensaje, json.dumps({"parcial": datos_parciales}),
-                  estado, mensaje, json.dumps({"parcial": datos_parciales})))
-        else:
-            cur.execute("""
-                INSERT INTO consulta_jobs (job_id, estado, mensaje, actualizado_en)
-                VALUES (%s, %s, %s, NOW())
-                ON CONFLICT (job_id) DO UPDATE SET estado=%s, mensaje=%s, actualizado_en=NOW()
-            """, (job_id, estado, mensaje, estado, mensaje))
+        cur.execute("""
+            INSERT INTO consulta_jobs (job_id, estado, mensaje, actualizado_en)
+            VALUES (%s, %s, %s, NOW())
+            ON CONFLICT (job_id) DO UPDATE SET estado=%s, mensaje=%s, actualizado_en=NOW()
+        """, (job_id, estado, mensaje, estado, mensaje))
         conn.commit()
         cur.close(); conn.close()
     except Exception as e:
@@ -634,11 +626,8 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento_abrev,
             "estado":         "Pendiente de pago",
             "total_vigencia": total_pagar,
         })
-
         if job_id and total_pagar is not None:
-            job_actualizar(job_id,
-                f"Año {anio}: impuesto es ${total_pagar:,}. Continuando...",
-                datos_parciales=list(registros))
+            job_actualizar(job_id, f"Año {anio}: impuesto es ${total_pagar:,}. Continuando...")
 
     print(f"\n  ✔ ¡Consulta Antioquia finalizada!")
     return registros, total_suma, avaluo_actual or avaluo, estado_veh, excede_limite
@@ -775,6 +764,67 @@ def consultar():
     return jsonify({"job_id": job_id, "estado": "procesando"})
 
 
+@app.route("/consultar/antioquia/vigencias", methods=["GET"])
+def consultar_antioquia_vigencias():
+    """
+    PASO 1 — Rápido (2 captchas).
+    Devuelve la lista de vigencias adeudadas sin valores.
+    """
+    import traceback
+    placa              = request.args.get("placa", "").upper().strip()
+    identificacion     = request.args.get("identificacion", "").strip()
+    tipo_documento     = request.args.get("tipo_documento", "CC").strip().upper()
+    modelo             = request.args.get("modelo", "").strip()
+    municipio_transito = request.args.get("municipio_transito", "").upper().strip()
+    apellidos          = request.args.get("apellidos_propietario", "").upper().strip()
+
+    if not all([placa, identificacion, modelo, municipio_transito, apellidos]):
+        return jsonify({"error": "Faltan datos requeridos"}), 400
+
+    resultado       = {}
+    error_container = {}
+
+    def ejecutar():
+        try:
+            tipo_documento_id = ANTIOQUIA_TIPO_DOC_MAP.get(tipo_documento, "1")
+            if tipo_documento_id == "2":
+                ident = str(identificacion) + str(_calcular_digito_nit(identificacion))
+            else:
+                ident = identificacion
+            session0, token0, data3 = _sesion_antioquia(
+                placa, ident, tipo_documento_id,
+                modelo, municipio_transito, apellidos
+            )
+            estado_veh          = data3.get("estadoCuenta", {})
+            vigencias_adeudadas = data3.get("listaVigenciasAdeudas", [])
+            avaluo              = estado_veh.get("avaluoComercial", 0) or 0
+            resultado['vigencias']   = vigencias_adeudadas
+            resultado['avaluo']      = avaluo
+            resultado['estado_veh']  = estado_veh
+            resultado['sin_deuda']   = len(vigencias_adeudadas) == 0
+        except Exception as e:
+            error_container['error'] = str(e)
+            print(traceback.format_exc(), flush=True)
+
+    hilo = threading.Thread(target=ejecutar)
+    hilo.start()
+    hilo.join(timeout=120)
+
+    if hilo.is_alive():
+        return jsonify({"error": "La consulta tardó demasiado. Intenta de nuevo."}), 504
+    if error_container:
+        return jsonify({"error": error_container['error']}), 500
+
+    return jsonify({
+        "placa":      placa,
+        "sin_deuda":  resultado.get('sin_deuda', True),
+        "avaluo":     resultado.get('avaluo', 0),
+        "retefuente": round(resultado.get('avaluo', 0) / 100) if resultado.get('avaluo') else 0,
+        "vigencias":  resultado.get('vigencias', []),
+        "placa_info": resultado.get('estado_veh', {}),
+    })
+
+
 @app.route("/consultar/estado", methods=["GET"])
 def consultar_estado():
     job_id = request.args.get("job_id", "").strip()
@@ -790,9 +840,10 @@ def consultar_estado():
             return jsonify({"estado": "no_encontrado"})
         estado, mensaje, resultado = row
         resp = {"estado": estado, "mensaje": mensaje}
-        if estado == "listo" and resultado:
+        if resultado:
+            # Siempre devolver resultado si existe (parcial o final)
             resp["resultado"] = resultado
-        elif estado == "error":
+        if estado == "error":
             resp["error"] = mensaje
         return jsonify(resp)
     except Exception as e:
