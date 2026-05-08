@@ -21,7 +21,7 @@ TIMEOUT = 10000
 MSG_NO_MATRICULADO = "El vehiculo no se encuentra matriculado en la Secretaria de Movilidad"
 AÑO_ACTUAL = str(datetime.now().year)
 
-TWOCAPTCHA_API_KEY = "47a18b883a00d513b2c78b0ac2cd0f00"
+TWOCAPTCHA_API_KEY = os.environ.get("TWOCAPTCHA_API_KEY", "")
 EMTRASUR_SITE_KEY  = "6Leshn4sAAAAAIas9tkeW3vKPg0a4uYqw-7fG7Pn"
 EMTRASUR_URL       = "https://sistematizacion.emtrasur.com.co/"
 ANTIOQUIA_SITE_KEY = "0x4AAAAAACJy_BR2tRNN1cnv"
