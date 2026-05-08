@@ -55,15 +55,23 @@ def get_db_conn():
     return psycopg2.connect(os.environ["DATABASE_URL"])
 
 
-def job_actualizar(job_id, mensaje, estado='procesando'):
+def job_actualizar(job_id, mensaje, estado='procesando', datos_parciales=None):
     try:
         conn = get_db_conn()
         cur  = conn.cursor()
-        cur.execute("""
-            INSERT INTO consulta_jobs (job_id, estado, mensaje, actualizado_en)
-            VALUES (%s, %s, %s, NOW())
-            ON CONFLICT (job_id) DO UPDATE SET estado=%s, mensaje=%s, actualizado_en=NOW()
-        """, (job_id, estado, mensaje, estado, mensaje))
+        if datos_parciales is not None:
+            cur.execute("""
+                INSERT INTO consulta_jobs (job_id, estado, mensaje, resultado, actualizado_en)
+                VALUES (%s, %s, %s, %s, NOW())
+                ON CONFLICT (job_id) DO UPDATE SET estado=%s, mensaje=%s, resultado=%s, actualizado_en=NOW()
+            """, (job_id, estado, mensaje, json.dumps({"parcial": datos_parciales}),
+                  estado, mensaje, json.dumps({"parcial": datos_parciales})))
+        else:
+            cur.execute("""
+                INSERT INTO consulta_jobs (job_id, estado, mensaje, actualizado_en)
+                VALUES (%s, %s, %s, NOW())
+                ON CONFLICT (job_id) DO UPDATE SET estado=%s, mensaje=%s, actualizado_en=NOW()
+            """, (job_id, estado, mensaje, estado, mensaje))
         conn.commit()
         cur.close(); conn.close()
     except Exception as e:
@@ -94,6 +102,65 @@ def job_error(job_id, mensaje_error):
         cur.close(); conn.close()
     except Exception as e:
         print(f"Error job error: {e}")
+
+
+# ============================================================
+#  CACHE IMPUESTOS ANTIOQUIA
+# ============================================================
+
+def cache_antioquia_buscar(placa):
+    """Busca en caché si la placa tiene resultado válido para el año actual."""
+    try:
+        anio_actual = datetime.now().year
+        conn = get_db_conn()
+        cur  = conn.cursor()
+        cur.execute("""
+            SELECT estado, total_pagar, avaluo_comercial, retefuente, vigencia
+            FROM cache_impuestos_antioquia
+            WHERE placa = %s
+              AND vigencia = %s
+              AND (expira_en IS NULL OR expira_en >= NOW())
+            ORDER BY creado_en DESC
+            LIMIT 1
+        """, (placa.upper(), str(anio_actual)))
+        row = cur.fetchone()
+        cur.close(); conn.close()
+        if row:
+            return {
+                "estado":     row[0],
+                "total":      row[1] or 0,
+                "avaluo":     row[2] or 0,
+                "retefuente": row[3] or 0,
+                "vigencia":   row[4],
+            }
+        return None
+    except Exception as e:
+        print(f"Error cache buscar: {e}")
+        return None
+
+
+def cache_antioquia_guardar_paz_salvo(placa, avaluo, estado_veh):
+    """Guarda en caché que la placa está a paz y salvo hasta fin de año."""
+    try:
+        anio_actual = datetime.now().year
+        expira = f"{anio_actual}-12-31 23:59:59"
+        retefuente = round(avaluo / 100) if avaluo else 0
+        conn = get_db_conn()
+        cur  = conn.cursor()
+        cur.execute("""
+            INSERT INTO cache_impuestos_antioquia
+                (placa, vigencia, total_pagar, avaluo_comercial, retefuente, estado, expira_en, creado_en)
+            VALUES (%s, %s, 0, %s, %s, 'PAZ_Y_SALVO', %s, NOW())
+            ON CONFLICT (placa, vigencia) DO UPDATE SET
+                total_pagar=0, avaluo_comercial=EXCLUDED.avaluo_comercial,
+                retefuente=EXCLUDED.retefuente, estado='PAZ_Y_SALVO',
+                expira_en=EXCLUDED.expira_en, actualizado_en=NOW()
+        """, (placa.upper(), str(anio_actual), avaluo or 0, retefuente, expira))
+        conn.commit()
+        cur.close(); conn.close()
+        print(f"  → Caché guardado PAZ_Y_SALVO para {placa}")
+    except Exception as e:
+        print(f"Error cache guardar paz y salvo: {e}")
 
 
 def bloquear_recursos(page):
@@ -626,8 +693,11 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento_abrev,
             "estado":         "Pendiente de pago",
             "total_vigencia": total_pagar,
         })
+
         if job_id and total_pagar is not None:
-            job_actualizar(job_id, f"Año {anio}: impuesto es ${total_pagar:,}. Continuando...")
+            job_actualizar(job_id,
+                f"Año {anio}: impuesto es ${total_pagar:,}. Continuando...",
+                datos_parciales=list(registros))
 
     print(f"\n  ✔ ¡Consulta Antioquia finalizada!")
     return registros, total_suma, avaluo_actual or avaluo, estado_veh, excede_limite
@@ -766,10 +836,7 @@ def consultar():
 
 @app.route("/consultar/antioquia/vigencias", methods=["GET"])
 def consultar_antioquia_vigencias():
-    """
-    PASO 1 — Rápido (2 captchas).
-    Devuelve la lista de vigencias adeudadas sin valores.
-    """
+    """PASO 1 — Rápido (2 captchas). Devuelve lista de vigencias sin valores."""
     import traceback
     placa              = request.args.get("placa", "").upper().strip()
     identificacion     = request.args.get("identificacion", "").strip()
@@ -780,6 +847,20 @@ def consultar_antioquia_vigencias():
 
     if not all([placa, identificacion, modelo, municipio_transito, apellidos]):
         return jsonify({"error": "Faltan datos requeridos"}), 400
+
+    # Verificar caché primero
+    cache = cache_antioquia_buscar(placa)
+    if cache and cache['estado'] == 'PAZ_Y_SALVO':
+        print(f"  → Cache hit PAZ_Y_SALVO para {placa}")
+        return jsonify({
+            "placa":       placa,
+            "sin_deuda":   True,
+            "avaluo":      cache.get('avaluo', 0),
+            "retefuente":  cache.get('retefuente', 0),
+            "vigencias":   [],
+            "placa_info":  {},
+            "desde_cache": True,
+        })
 
     resultado       = {}
     error_container = {}
@@ -798,10 +879,13 @@ def consultar_antioquia_vigencias():
             estado_veh          = data3.get("estadoCuenta", {})
             vigencias_adeudadas = data3.get("listaVigenciasAdeudas", [])
             avaluo              = estado_veh.get("avaluoComercial", 0) or 0
-            resultado['vigencias']   = vigencias_adeudadas
-            resultado['avaluo']      = avaluo
-            resultado['estado_veh']  = estado_veh
-            resultado['sin_deuda']   = len(vigencias_adeudadas) == 0
+            resultado['vigencias']  = vigencias_adeudadas
+            resultado['avaluo']     = avaluo
+            resultado['estado_veh'] = estado_veh
+            resultado['sin_deuda']  = len(vigencias_adeudadas) == 0
+            # Guardar en caché si está a paz y salvo
+            if not vigencias_adeudadas:
+                cache_antioquia_guardar_paz_salvo(placa, avaluo, estado_veh)
         except Exception as e:
             error_container['error'] = str(e)
             print(traceback.format_exc(), flush=True)
@@ -815,13 +899,19 @@ def consultar_antioquia_vigencias():
     if error_container:
         return jsonify({"error": error_container['error']}), 500
 
+    estado_veh = resultado.get('estado_veh', {})
     return jsonify({
         "placa":      placa,
         "sin_deuda":  resultado.get('sin_deuda', True),
         "avaluo":     resultado.get('avaluo', 0),
         "retefuente": round(resultado.get('avaluo', 0) / 100) if resultado.get('avaluo') else 0,
         "vigencias":  resultado.get('vigencias', []),
-        "placa_info": resultado.get('estado_veh', {}),
+        "placa_info": {
+            "marca":       estado_veh.get("marca", ""),
+            "linea":       estado_veh.get("linea", ""),
+            "modelo":      estado_veh.get("modelo", ""),
+            "propietario": estado_veh.get("nombrePropietario", ""),
+        }
     })
 
 
