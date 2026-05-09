@@ -1190,9 +1190,7 @@ def reportar_eliminar(reporte_id):
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
-@app.route("/debug-env", methods=["GET"])
-def debug_env():
-    return jsonify({"DATABASE_URL": os.environ.get("DATABASE_URL", "NO EXISTE"), "ANTHROPIC_API_KEY": os.environ.get("ANTHROPIC_API_KEY", "NO EXISTE")})
+
 
 
 @app.route("/ocr-tarjeta", methods=["POST"])
