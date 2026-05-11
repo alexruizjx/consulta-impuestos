@@ -454,18 +454,23 @@ def _sesion_antioquia(placa, identificacion, tipo_documento_id,
         json={"placa": placa, "idTipoIdentificacion": tipo_documento_id, "identificacion": identificacion},
         timeout=60
     )
-    data1 = r1.json()
+    try:
+        data1 = r1.json()
+    except Exception:
+        data1 = None
 
-    # Verificar si el sitio devolvió un error (placa no coincide con propietario)
+    if not data1 or not isinstance(data1, dict):
+        raise Exception("La placa ingresada no coincide con la identificacion del propietario. Verifica los datos e intenta de nuevo.")
+
     if data1.get("codigo") == 0 or (not data1.get("referencia") and data1.get("mensaje")):
-        mensaje = data1.get("mensaje") or data1.get("descripcion") or "La placa ingresada no coincide con la identificación del propietario."
+        mensaje = data1.get("mensaje") or data1.get("descripcion") or "La placa ingresada no coincide con la identificacion del propietario."
         raise Exception(mensaje)
-    if data1 is None:
-        raise Exception("La placa ingresada no coincide con la identificación del propietario.")
 
     referencia = data1.get("referencia")
+    if not referencia:
+        raise Exception("La placa ingresada no coincide con la identificacion del propietario. Verifica los datos e intenta de nuevo.")
 
-    opciones_nombre = data1.get("preguntaNombrePropietario", {}).get("opcionesPregunta", [])
+    opciones_nombre = (data1.get("preguntaNombrePropietario") or {}).get("opcionesPregunta", [])
     nombre_encontrado = next(
         (n for n in opciones_nombre if apellidos_propietario.upper() in n.upper()), None
     )
