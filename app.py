@@ -896,8 +896,8 @@ def consultar_antioquia_vigencias():
             resultado['avaluo']     = avaluo
             resultado['estado_veh'] = estado_veh
             resultado['sin_deuda']  = len(vigencias_adeudadas) == 0
-            # Guardar en caché si está a paz y salvo
-            if not vigencias_adeudadas:
+            # Guardar en caché si está a paz y salvo (solo si hay avaluo, para evitar cachear errores)
+            if not vigencias_adeudadas and avaluo and avaluo > 0:
                 cache_antioquia_guardar_paz_salvo(placa, avaluo, estado_veh)
         except Exception as e:
             error_container['error'] = str(e)
