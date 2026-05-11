@@ -108,35 +108,9 @@ def job_error(job_id, mensaje_error):
 #  CACHE IMPUESTOS ANTIOQUIA
 # ============================================================
 
-def periodo_fiscal_actual():
-    """
-    Retorna el período fiscal actual:
-    - 'descuento': 1 ene - 30 abr (valor con 10% descuento)
-    - 'sin_descuento': 1 may - 31 jul (valor sin descuento = valor_cache * 1.1)
-    - 'mora': 1 ago en adelante (no cachear, consultar en tiempo real)
-    """
-    hoy = datetime.now()
-    mes = hoy.month
-    if 1 <= mes <= 4:
-        return 'descuento'
-    elif 5 <= mes <= 7:
-        return 'sin_descuento'
-    else:
-        return 'mora'
-
-
 def cache_antioquia_buscar(placa):
-    """
-    Busca en caché con lógica de períodos fiscales:
-    - descuento (ene-abr): devuelve valor cacheado tal cual
-    - sin_descuento (may-jul): devuelve valor cacheado * 1.1
-    - mora (ago-dic): no usa caché, retorna None
-    """
+    """Busca en caché si la placa tiene resultado válido para el año actual."""
     try:
-        periodo = periodo_fiscal_actual()
-        if periodo == 'mora':
-            return None  # Siempre consultar en tiempo real en período de mora
-
         anio_actual = datetime.now().year
         conn = get_db_conn()
         cur  = conn.cursor()
@@ -145,102 +119,48 @@ def cache_antioquia_buscar(placa):
             FROM cache_impuestos_antioquia
             WHERE placa = %s
               AND vigencia = %s
+              AND (expira_en IS NULL OR expira_en >= NOW())
             ORDER BY creado_en DESC
             LIMIT 1
         """, (placa.upper(), str(anio_actual)))
         row = cur.fetchone()
         cur.close(); conn.close()
-
-        if not row:
-            return None
-
-        estado    = row[0]
-        total     = row[1] or 0
-        avaluo    = row[2] or 0
-        retefuente = row[3] or 0
-
-        # Solo cachear paz y salvo o deuda solo del año actual
-        if estado not in ('PAZ_Y_SALVO', 'PENDIENTE'):
-            return None
-
-        # En período sin descuento, ajustar valor pendiente * 1.1
-        if periodo == 'sin_descuento' and estado == 'PENDIENTE' and total > 0:
-            total = round(total * 1.1)
-            print(f"  → Período sin descuento: ajustando total a ${total:,}")
-
-        return {
-            "estado":     estado,
-            "total":      total,
-            "avaluo":     avaluo,
-            "retefuente": retefuente,
-            "vigencia":   str(anio_actual),
-            "desde_cache": True,
-            "periodo":    periodo,
-        }
+        if row:
+            return {
+                "estado":     row[0],
+                "total":      row[1] or 0,
+                "avaluo":     row[2] or 0,
+                "retefuente": row[3] or 0,
+                "vigencia":   row[4],
+            }
+        return None
     except Exception as e:
         print(f"Error cache buscar: {e}")
         return None
 
 
 def cache_antioquia_guardar_paz_salvo(placa, avaluo, estado_veh):
-    """Guarda en caché paz y salvo. Solo en período de descuento o sin_descuento."""
+    """Guarda en caché que la placa está a paz y salvo hasta fin de año."""
     try:
-        periodo = periodo_fiscal_actual()
-        if periodo == 'mora':
-            return  # No cachear en período de mora
         anio_actual = datetime.now().year
-        retefuente  = round(avaluo / 100) if avaluo else 0
-        conn = get_db_conn()
-        cur  = conn.cursor()
-        cur.execute("""
-            INSERT INTO cache_impuestos_antioquia
-                (placa, vigencia, total_pagar, avaluo_comercial, retefuente, estado, creado_en)
-            VALUES (%s, %s, 0, %s, %s, 'PAZ_Y_SALVO', NOW())
-            ON CONFLICT (placa, vigencia) DO UPDATE SET
-                total_pagar=0, avaluo_comercial=EXCLUDED.avaluo_comercial,
-                retefuente=EXCLUDED.retefuente, estado='PAZ_Y_SALVO',
-                actualizado_en=NOW()
-        """, (placa.upper(), str(anio_actual), avaluo or 0, retefuente))
-        conn.commit()
-        cur.close(); conn.close()
-        print(f"  → Caché guardado PAZ_Y_SALVO para {placa} (período: {periodo})")
-    except Exception as e:
-        print(f"Error cache guardar paz y salvo: {e}")
-
-
-def cache_antioquia_guardar_pendiente(placa, total, avaluo, registros):
-    """
-    Guarda en caché deuda solo si el vehículo debe únicamente la vigencia del año actual.
-    Solo en período de descuento (ene-abr) o sin_descuento (may-jul).
-    """
-    try:
-        periodo = periodo_fiscal_actual()
-        if periodo == 'mora':
-            return  # No cachear en período de mora
-
-        anio_actual = str(datetime.now().year)
-        # Solo cachear si la única vigencia adeudada es el año actual
-        vigencias = [str(r.get('vigencia', '')) for r in registros]
-        if vigencias != [anio_actual]:
-            return  # Tiene deudas de otros años, no cachear
-
+        expira = f"{anio_actual}-12-31 23:59:59"
         retefuente = round(avaluo / 100) if avaluo else 0
         conn = get_db_conn()
         cur  = conn.cursor()
         cur.execute("""
             INSERT INTO cache_impuestos_antioquia
-                (placa, vigencia, total_pagar, avaluo_comercial, retefuente, estado, creado_en)
-            VALUES (%s, %s, %s, %s, %s, 'PENDIENTE', NOW())
+                (placa, vigencia, total_pagar, avaluo_comercial, retefuente, estado, expira_en, creado_en)
+            VALUES (%s, %s, 0, %s, %s, 'PAZ_Y_SALVO', %s, NOW())
             ON CONFLICT (placa, vigencia) DO UPDATE SET
-                total_pagar=EXCLUDED.total_pagar, avaluo_comercial=EXCLUDED.avaluo_comercial,
-                retefuente=EXCLUDED.retefuente, estado='PENDIENTE',
-                actualizado_en=NOW()
-        """, (placa.upper(), anio_actual, total or 0, avaluo or 0, retefuente))
+                total_pagar=0, avaluo_comercial=EXCLUDED.avaluo_comercial,
+                retefuente=EXCLUDED.retefuente, estado='PAZ_Y_SALVO',
+                expira_en=EXCLUDED.expira_en, actualizado_en=NOW()
+        """, (placa.upper(), str(anio_actual), avaluo or 0, retefuente, expira))
         conn.commit()
         cur.close(); conn.close()
-        print(f"  → Caché guardado PENDIENTE ${total:,} para {placa} (período: {periodo})")
+        print(f"  → Caché guardado PAZ_Y_SALVO para {placa}")
     except Exception as e:
-        print(f"Error cache guardar pendiente: {e}")
+        print(f"Error cache guardar paz y salvo: {e}")
 
 
 def bloquear_recursos(page):
@@ -535,6 +455,14 @@ def _sesion_antioquia(placa, identificacion, tipo_documento_id,
         timeout=60
     )
     data1 = r1.json()
+
+    # Verificar si el sitio devolvió un error (placa no coincide con propietario)
+    if data1.get("codigo") == 0 or (not data1.get("referencia") and data1.get("mensaje")):
+        mensaje = data1.get("mensaje") or data1.get("descripcion") or "La placa ingresada no coincide con la identificación del propietario."
+        raise Exception(mensaje)
+    if data1 is None:
+        raise Exception("La placa ingresada no coincide con la identificación del propietario.")
+
     referencia = data1.get("referencia")
 
     opciones_nombre = data1.get("preguntaNombrePropietario", {}).get("opcionesPregunta", [])
@@ -863,46 +791,6 @@ def consultar():
             "sin_deuda": resultado.get('total', 0) == 0
         })
 
-    # Antioquia — verificar caché antes de lanzar job
-    cache = cache_antioquia_buscar(placa)
-    if cache:
-        if cache['estado'] == 'PAZ_Y_SALVO':
-            print(f"  → Cache hit PAZ_Y_SALVO (consultar) para {placa}")
-            return jsonify({
-                "job_id":    None,
-                "estado":    "cache",
-                "resultado": {
-                    "placa":      placa,
-                    "municipio":  "antioquia",
-                    "placa_info": {},
-                    "registros":  [],
-                    "total":      0,
-                    "avaluo":     cache.get('avaluo', 0),
-                    "retefuente": cache.get('retefuente', 0),
-                    "sin_deuda":  True,
-                    "desde_cache": True,
-                }
-            })
-        elif cache['estado'] == 'PENDIENTE':
-            print(f"  → Cache hit PENDIENTE (consultar) para {placa}")
-            total_cache = cache.get('total', 0)
-            return jsonify({
-                "job_id":    None,
-                "estado":    "cache",
-                "resultado": {
-                    "placa":      placa,
-                    "municipio":  "antioquia",
-                    "placa_info": {},
-                    "registros":  [{"vigencia": cache.get('vigencia', str(datetime.now().year)), "estado": "Pendiente de pago", "total_vigencia": total_cache}],
-                    "total":      total_cache,
-                    "avaluo":     cache.get('avaluo', 0),
-                    "retefuente": cache.get('retefuente', 0),
-                    "sin_deuda":  False,
-                    "desde_cache": True,
-                    "periodo":    cache.get('periodo', ''),
-                }
-            })
-
     # Antioquia — sistema asíncrono
     job_id = str(uuid.uuid4())[:12]
     job_actualizar(job_id, "Iniciando consulta...", "procesando")
@@ -942,11 +830,6 @@ def consultar():
             if excede:
                 respuesta["excede_limite"]  = True
                 respuesta["mensaje_limite"] = f"El límite de consulta es de {ANTIOQUIA_LIMITE_VIGENCIAS} vigencias. Comunícate con un asesor de la Gobernación de Antioquia al 6044444666."
-            # Guardar en caché si aplica
-            if len(registros) == 0:
-                cache_antioquia_guardar_paz_salvo(placa, avaluo, estado_veh)
-            else:
-                cache_antioquia_guardar_pendiente(placa, total, avaluo, registros)
             job_terminar(job_id, respuesta)
         except Exception as e:
             print(traceback.format_exc(), flush=True)
