@@ -984,6 +984,57 @@ def _col_anio(modelo):
     return f'anio_{anio}'
 
 
+
+@app.route("/retefuente/marcas-all", methods=["GET"])
+def retefuente_marcas_all():
+    """Devuelve todas las marcas disponibles en la tabla de retefuente."""
+    try:
+        conn = get_db_conn()
+        cur  = conn.cursor()
+        cur.execute("SELECT DISTINCT marca FROM retefuente_2026 ORDER BY marca")
+        marcas = [r[0] for r in cur.fetchall()]
+        cur.close(); conn.close()
+        return jsonify({"marcas": marcas})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/retefuente/lineas", methods=["GET"])
+def retefuente_lineas():
+    """Devuelve las lineas disponibles para una marca."""
+    marca = request.args.get("marca", "").strip().upper()
+    if not marca:
+        return jsonify({"error": "Debes enviar marca."}), 400
+    try:
+        conn = get_db_conn()
+        cur  = conn.cursor()
+        cur.execute("SELECT DISTINCT linea FROM retefuente_2026 WHERE marca=%s ORDER BY linea", (marca,))
+        lineas = [r[0] for r in cur.fetchall()]
+        cur.close(); conn.close()
+        return jsonify({"lineas": lineas})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/retefuente/modelos", methods=["GET"])
+def retefuente_modelos():
+    """Devuelve los modelos (anos) disponibles en la tabla de retefuente."""
+    try:
+        conn = get_db_conn()
+        cur  = conn.cursor()
+        cur.execute("""
+            SELECT column_name FROM information_schema.columns
+            WHERE table_name = 'retefuente_2026'
+              AND column_name LIKE 'anio_%'
+            ORDER BY column_name DESC
+        """)
+        modelos = [r[0].replace('anio_', '') for r in cur.fetchall()]
+        cur.close(); conn.close()
+        return jsonify({"modelos": modelos})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/retefuente/buscar", methods=["GET"])
 def retefuente_buscar():
     """
