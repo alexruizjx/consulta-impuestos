@@ -987,11 +987,20 @@ def _col_anio(modelo):
 
 @app.route("/retefuente/marcas-all", methods=["GET"])
 def retefuente_marcas_all():
-    """Devuelve todas las marcas disponibles en la tabla de retefuente."""
+    """Devuelve todas las marcas para una clase (tabla)."""
+    clase      = request.args.get("clase", "").strip().upper()
+    carroceria = request.args.get("carroceria", "").strip().upper()
     try:
         conn = get_db_conn()
         cur  = conn.cursor()
-        cur.execute("SELECT DISTINCT marca FROM retefuente_2026 ORDER BY marca")
+        if clase:
+            tabla = _tabla_retefuente(clase, carroceria)
+            if tabla:
+                cur.execute("SELECT DISTINCT marca FROM retefuente_2026 WHERE tabla=%s ORDER BY marca", (tabla,))
+            else:
+                cur.execute("SELECT DISTINCT marca FROM retefuente_2026 ORDER BY marca")
+        else:
+            cur.execute("SELECT DISTINCT marca FROM retefuente_2026 ORDER BY marca")
         marcas = [r[0] for r in cur.fetchall()]
         cur.close(); conn.close()
         return jsonify({"marcas": marcas})
@@ -1001,14 +1010,23 @@ def retefuente_marcas_all():
 
 @app.route("/retefuente/lineas", methods=["GET"])
 def retefuente_lineas():
-    """Devuelve las lineas disponibles para una marca."""
-    marca = request.args.get("marca", "").strip().upper()
+    """Devuelve las lineas para una marca (y opcionalmente clase)."""
+    marca      = request.args.get("marca", "").strip().upper()
+    clase      = request.args.get("clase", "").strip().upper()
+    carroceria = request.args.get("carroceria", "").strip().upper()
     if not marca:
         return jsonify({"error": "Debes enviar marca."}), 400
     try:
         conn = get_db_conn()
         cur  = conn.cursor()
-        cur.execute("SELECT DISTINCT linea FROM retefuente_2026 WHERE marca=%s ORDER BY linea", (marca,))
+        if clase:
+            tabla = _tabla_retefuente(clase, carroceria)
+            if tabla:
+                cur.execute("SELECT DISTINCT linea FROM retefuente_2026 WHERE marca=%s AND tabla=%s ORDER BY linea", (marca, tabla))
+            else:
+                cur.execute("SELECT DISTINCT linea FROM retefuente_2026 WHERE marca=%s ORDER BY linea", (marca,))
+        else:
+            cur.execute("SELECT DISTINCT linea FROM retefuente_2026 WHERE marca=%s ORDER BY linea", (marca,))
         lineas = [r[0] for r in cur.fetchall()]
         cur.close(); conn.close()
         return jsonify({"lineas": lineas})
@@ -1018,7 +1036,7 @@ def retefuente_lineas():
 
 @app.route("/retefuente/modelos", methods=["GET"])
 def retefuente_modelos():
-    """Devuelve los modelos (anos) disponibles en la tabla de retefuente."""
+    """Devuelve los modelos (anos) disponibles."""
     try:
         conn = get_db_conn()
         cur  = conn.cursor()
@@ -1028,12 +1046,126 @@ def retefuente_modelos():
               AND column_name LIKE 'anio_%'
             ORDER BY column_name DESC
         """)
-        modelos = [r[0].replace('anio_', '') for r in cur.fetchall()]
+        modelos = [r[0].replace('anio_', '').replace('_ant', ' y anteriores') for r in cur.fetchall()]
         cur.close(); conn.close()
         return jsonify({"modelos": modelos})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+
+@app.route("/retefuente/opciones", methods=["GET"])
+def retefuente_opciones():
+    """
+    Devuelve todas las opciones para marca+linea+modelo+cilindraje.
+    Cilindraje >= al ingresado. Incluye clase, tonelaje, pasajeros.
+    """
+    marca      = request.args.get("marca", "").strip().upper()
+    linea      = request.args.get("linea", "").strip().upper()
+    clase      = request.args.get("clase", "").strip().upper()
+    carroceria = request.args.get("carroceria", "").strip().upper()
+    modelo     = request.args.get("modelo", "").strip().replace(" y anteriores", "_ant")
+    cilindraje = request.args.get("cilindraje", "0").strip()
+
+    if not marca or not modelo:
+        return jsonify({"error": "Debes enviar marca y modelo."}), 400
+
+    anio = modelo.replace("_ant", "")
+    try:
+        anio_int = int(anio)
+    except:
+        return jsonify({"error": "Modelo invalido."}), 400
+    col_anio = _col_anio(str(anio_int))
+
+    try:
+        cil = int(cilindraje) if cilindraje else 0
+    except:
+        cil = 0
+
+    try:
+        conn = get_db_conn()
+        cur  = conn.cursor()
+
+        where  = ["marca = %s", f"{col_anio} > 0"]
+        params = [marca]
+
+        if linea:
+            palabras = [p for p in linea.split() if len(p) > 2][:3]
+            for p in palabras:
+                where.append("linea ILIKE %s")
+                params.append(f'%{p}%')
+
+        if clase:
+            tabla = _tabla_retefuente(clase, carroceria)
+            if tabla:
+                where.append("tabla = %s")
+                params.append(tabla)
+
+        if cil > 0:
+            where.append("cilindraje >= %s")
+            params.append(cil)
+
+        sql = f"""
+            SELECT marca, linea, cilindraje, tabla, {col_anio} as avaluo,
+                   clase, tonelaje, pasajeros
+            FROM retefuente_2026
+            WHERE {' AND '.join(where)}
+            ORDER BY cilindraje ASC
+            LIMIT 20
+        """
+        cur.execute(sql, params)
+        rows = cur.fetchall()
+
+        # Si no hay resultados con filtro de linea, buscar sin él
+        if not rows and linea:
+            where2  = ["marca = %s", f"{col_anio} > 0"]
+            params2 = [marca]
+            if clase:
+                tabla = _tabla_retefuente(clase, carroceria)
+                if tabla:
+                    where2.append("tabla = %s")
+                    params2.append(tabla)
+            if cil > 0:
+                where2.append("cilindraje >= %s")
+                params2.append(cil)
+            sql2 = f"""
+                SELECT marca, linea, cilindraje, tabla, {col_anio} as avaluo,
+                       clase, tonelaje, pasajeros
+                FROM retefuente_2026
+                WHERE {' AND '.join(where2)}
+                ORDER BY cilindraje ASC
+                LIMIT 20
+            """
+            cur.execute(sql2, params2)
+            rows = cur.fetchall()
+
+        cur.close(); conn.close()
+
+        TABLA_CLASE = {
+            'T1':'Automóvil','T2':'Campero/Camioneta','T3':'Camioneta D.C.',
+            'T4':'Eléctrico','T5':'Motocicleta','T6':'Bus/Buseta',
+            'T7':'Camión/Volqueta','T8':'Ambulancia','T9':'Híbrido'
+        }
+
+        opciones = []
+        for r in rows:
+            op = {
+                "marca":      r[0],
+                "linea":      r[1],
+                "cilindraje": r[2],
+                "tabla":      r[3],
+                "avaluo":     r[4],
+                "retefuente": round(r[4] / 100) if r[4] else 0,
+                "clase_veh":  r[5] or TABLA_CLASE.get(r[3], r[3]),
+                "tonelaje":   float(r[6]) if r[6] else None,
+                "pasajeros":  r[7] if r[7] else None,
+            }
+            opciones.append(op)
+
+        return jsonify({"opciones": opciones})
+    except Exception as e:
+        import traceback
+        print(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/retefuente/buscar", methods=["GET"])
 def retefuente_buscar():
