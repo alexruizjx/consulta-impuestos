@@ -987,13 +987,16 @@ def _col_anio(modelo):
 
 @app.route("/retefuente/marcas-all", methods=["GET"])
 def retefuente_marcas_all():
-    """Devuelve todas las marcas para una clase (tabla)."""
+    """Devuelve todas las marcas para una clase (tabla o clase_bd)."""
     clase      = request.args.get("clase", "").strip().upper()
+    clase_bd   = request.args.get("clase_bd", "").strip().upper()
     carroceria = request.args.get("carroceria", "").strip().upper()
     try:
         conn = get_db_conn()
         cur  = conn.cursor()
-        if clase:
+        if clase_bd:
+            cur.execute("SELECT DISTINCT marca FROM retefuente_2026 WHERE clase=%s ORDER BY marca", (clase_bd,))
+        elif clase:
             tabla = _tabla_retefuente(clase, carroceria)
             if tabla:
                 cur.execute("SELECT DISTINCT marca FROM retefuente_2026 WHERE tabla=%s ORDER BY marca", (tabla,))
@@ -1010,16 +1013,19 @@ def retefuente_marcas_all():
 
 @app.route("/retefuente/lineas", methods=["GET"])
 def retefuente_lineas():
-    """Devuelve las lineas para una marca (y opcionalmente clase)."""
+    """Devuelve las lineas para una marca (y opcionalmente clase o clase_bd)."""
     marca      = request.args.get("marca", "").strip().upper()
     clase      = request.args.get("clase", "").strip().upper()
+    clase_bd   = request.args.get("clase_bd", "").strip().upper()
     carroceria = request.args.get("carroceria", "").strip().upper()
     if not marca:
         return jsonify({"error": "Debes enviar marca."}), 400
     try:
         conn = get_db_conn()
         cur  = conn.cursor()
-        if clase:
+        if clase_bd:
+            cur.execute("SELECT DISTINCT linea FROM retefuente_2026 WHERE marca=%s AND clase=%s ORDER BY linea", (marca, clase_bd))
+        elif clase:
             tabla = _tabla_retefuente(clase, carroceria)
             if tabla:
                 cur.execute("SELECT DISTINCT linea FROM retefuente_2026 WHERE marca=%s AND tabla=%s ORDER BY linea", (marca, tabla))
@@ -1094,7 +1100,11 @@ def retefuente_opciones():
                 where.append("linea ILIKE %s")
                 params.append(f'%{p}%')
 
-        if clase:
+        clase_bd   = request.args.get("clase_bd", "").strip().upper()
+        if clase_bd:
+            where.append("clase = %s")
+            params.append(clase_bd)
+        elif clase:
             tabla = _tabla_retefuente(clase, carroceria)
             if tabla:
                 where.append("tabla = %s")
@@ -1119,7 +1129,10 @@ def retefuente_opciones():
         if not rows and linea:
             where2  = ["marca = %s", f"{col_anio} > 0"]
             params2 = [marca]
-            if clase:
+            if clase_bd:
+                where2.append("clase = %s")
+                params2.append(clase_bd)
+            elif clase:
                 tabla = _tabla_retefuente(clase, carroceria)
                 if tabla:
                     where2.append("tabla = %s")
