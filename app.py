@@ -1069,15 +1069,16 @@ def retefuente_opciones():
     linea      = request.args.get("linea", "").strip().upper()
     clase      = request.args.get("clase", "").strip().upper()
     carroceria = request.args.get("carroceria", "").strip().upper()
-    modelo     = request.args.get("modelo", "").strip().replace(" y anteriores", "_ant")
+    modelo     = request.args.get("modelo", "").strip()
     cilindraje = request.args.get("cilindraje", "0").strip()
 
     if not marca or not modelo:
         return jsonify({"error": "Debes enviar marca y modelo."}), 400
 
-    anio = modelo.replace("_ant", "")
+    # Normalizar modelo — acepta año libre, "2001 y anteriores", etc.
+    modelo_norm = modelo.replace(" y anteriores", "").replace("_ant", "").strip()
     try:
-        anio_int = int(anio)
+        anio_int = int(modelo_norm)
     except:
         return jsonify({"error": "Modelo invalido."}), 400
     col_anio = _col_anio(str(anio_int))
