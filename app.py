@@ -1299,7 +1299,9 @@ def tramites_filtros():
         departamento = request.args.get("departamento", "").strip().upper()
         municipio    = request.args.get("municipio", "").strip().upper()
         clase        = request.args.get("clase", "").strip().upper()
-        if campo == "departamento":
+        if campo == "departamento" and municipio:
+            cur.execute("SELECT DISTINCT departamento FROM tramites_transito WHERE municipio=%s ORDER BY departamento LIMIT 1", (municipio,))
+        elif campo == "departamento":
             cur.execute("SELECT DISTINCT departamento FROM tramites_transito ORDER BY departamento")
         elif campo == "municipio" and departamento:
             cur.execute("SELECT DISTINCT municipio FROM tramites_transito WHERE departamento=%s ORDER BY municipio", (departamento,))
