@@ -1305,6 +1305,8 @@ def tramites_filtros():
             cur.execute("SELECT DISTINCT departamento FROM tramites_transito ORDER BY departamento")
         elif campo == "municipio" and departamento:
             cur.execute("SELECT DISTINCT municipio FROM tramites_transito WHERE departamento=%s ORDER BY municipio", (departamento,))
+        elif campo == "municipio" and not departamento:
+            cur.execute("SELECT DISTINCT municipio FROM tramites_transito ORDER BY municipio")
         elif campo == "clase" and municipio:
             cur.execute("SELECT DISTINCT clase FROM tramites_transito WHERE municipio=%s ORDER BY clase", (municipio,))
         elif campo == "tramite" and municipio and clase:
