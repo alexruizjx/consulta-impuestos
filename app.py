@@ -1303,8 +1303,6 @@ def tramites_filtros():
             cur.execute("SELECT DISTINCT departamento FROM tramites_transito ORDER BY departamento")
         elif campo == "municipio" and departamento:
             cur.execute("SELECT DISTINCT municipio FROM tramites_transito WHERE departamento=%s ORDER BY municipio", (departamento,))
-        elif campo == "municipio" and not departamento:
-            cur.execute("SELECT DISTINCT municipio FROM tramites_transito ORDER BY municipio")
         elif campo == "clase" and municipio:
             cur.execute("SELECT DISTINCT clase FROM tramites_transito WHERE municipio=%s ORDER BY clase", (municipio,))
         elif campo == "tramite" and municipio and clase:
@@ -1325,19 +1323,16 @@ def tramites_precio():
     municipio    = request.args.get("municipio", "").strip().upper()
     clase        = request.args.get("clase", "").strip().upper()
     tramite      = request.args.get("tramite", "").strip().upper()
-    if not all([municipio, clase, tramite]):
-        return jsonify({"error": "Debes enviar municipio, clase y tramite"}), 400
+    if not all([departamento, municipio, clase, tramite]):
+        return jsonify({"error": "Debes enviar departamento, municipio, clase y tramite"}), 400
     try:
         conn = get_db_conn()
         cur = conn.cursor()
-        if departamento:
-            cur.execute("SELECT precio, departamento FROM tramites_transito WHERE departamento=%s AND municipio=%s AND clase=%s AND tramite=%s LIMIT 1", (departamento, municipio, clase, tramite))
-        else:
-            cur.execute("SELECT precio, departamento FROM tramites_transito WHERE municipio=%s AND clase=%s AND tramite=%s LIMIT 1", (municipio, clase, tramite))
+        cur.execute("SELECT precio FROM tramites_transito WHERE departamento=%s AND municipio=%s AND clase=%s AND tramite=%s LIMIT 1", (departamento, municipio, clase, tramite))
         row = cur.fetchone()
         cur.close(); conn.close()
         if row:
-            return jsonify({"departamento": row[1], "municipio": municipio, "clase": clase, "tramite": tramite, "precio": row[0]})
+            return jsonify({"departamento": departamento, "municipio": municipio, "clase": clase, "tramite": tramite, "precio": row[0]})
         return jsonify({"error": "No se encontro el tramite"}), 404
     except Exception as e:
         return jsonify({"error": str(e)}), 500
