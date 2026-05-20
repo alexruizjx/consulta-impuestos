@@ -169,46 +169,66 @@ def bloquear_recursos(page):
                else route.continue_())
 
 
-def resolver_recaptcha_2captcha(site_key, page_url):
-    resp = requests.post("https://2captcha.com/in.php", data={
-        "key": TWOCAPTCHA_API_KEY, "method": "userrecaptcha",
-        "googlekey": site_key, "pageurl": page_url, "json": 1,
-    }, timeout=15)
-    data = resp.json()
-    if data.get("status") != 1:
-        raise Exception(f"2captcha error: {data.get('request')}")
-    captcha_id = data["request"]
-    for _ in range(24):
-        time.sleep(5)
-        resultado = requests.get("https://2captcha.com/res.php", params={
-            "key": TWOCAPTCHA_API_KEY, "action": "get", "id": captcha_id, "json": 1,
-        }, timeout=10).json()
-        if resultado.get("status") == 1:
-            return resultado["request"]
-        if resultado.get("request") not in ("CAPCHA_NOT_READY", "CAPTCHA_NOT_READY"):
-            raise Exception(f"2captcha error: {resultado.get('request')}")
-    raise Exception("2captcha tardo demasiado.")
+def resolver_recaptcha_2captcha(site_key, page_url, intentos=3):
+    ultimo_error = None
+    for intento in range(intentos):
+        try:
+            resp = requests.post("https://2captcha.com/in.php", data={
+                "key": TWOCAPTCHA_API_KEY, "method": "userrecaptcha",
+                "googlekey": site_key, "pageurl": page_url, "json": 1,
+            }, timeout=15)
+            data = resp.json()
+            if data.get("status") != 1:
+                raise Exception(f"2captcha error: {data.get('request')}")
+            captcha_id = data["request"]
+            for _ in range(24):
+                time.sleep(5)
+                resultado = requests.get("https://2captcha.com/res.php", params={
+                    "key": TWOCAPTCHA_API_KEY, "action": "get", "id": captcha_id, "json": 1,
+                }, timeout=10).json()
+                if resultado.get("status") == 1:
+                    return resultado["request"]
+                if resultado.get("request") not in ("CAPCHA_NOT_READY", "CAPTCHA_NOT_READY"):
+                    raise Exception(f"2captcha error: {resultado.get('request')}")
+            raise Exception("2captcha tardo demasiado.")
+        except Exception as e:
+            ultimo_error = e
+            if "IP_BANNED" in str(e) and intento < intentos - 1:
+                time.sleep(3)
+                continue
+            raise
+    raise ultimo_error
 
 
-def resolver_turnstile_2captcha(site_key, page_url):
-    resp = requests.post("https://2captcha.com/in.php", data={
-        "key": TWOCAPTCHA_API_KEY, "method": "turnstile",
-        "sitekey": site_key, "pageurl": page_url, "json": 1,
-    }, timeout=15)
-    data = resp.json()
-    if data.get("status") != 1:
-        raise Exception(f"2captcha error: {data.get('request')}")
-    captcha_id = data["request"]
-    for _ in range(24):
-        time.sleep(5)
-        resultado = requests.get("https://2captcha.com/res.php", params={
-            "key": TWOCAPTCHA_API_KEY, "action": "get", "id": captcha_id, "json": 1,
-        }, timeout=10).json()
-        if resultado.get("status") == 1:
-            return resultado["request"]
-        if resultado.get("request") not in ("CAPCHA_NOT_READY", "CAPTCHA_NOT_READY"):
-            raise Exception(f"2captcha error: {resultado.get('request')}")
-    raise Exception("2captcha tardo demasiado.")
+def resolver_turnstile_2captcha(site_key, page_url, intentos=3):
+    ultimo_error = None
+    for intento in range(intentos):
+        try:
+            resp = requests.post("https://2captcha.com/in.php", data={
+                "key": TWOCAPTCHA_API_KEY, "method": "turnstile",
+                "sitekey": site_key, "pageurl": page_url, "json": 1,
+            }, timeout=15)
+            data = resp.json()
+            if data.get("status") != 1:
+                raise Exception(f"2captcha error: {data.get('request')}")
+            captcha_id = data["request"]
+            for _ in range(24):
+                time.sleep(5)
+                resultado = requests.get("https://2captcha.com/res.php", params={
+                    "key": TWOCAPTCHA_API_KEY, "action": "get", "id": captcha_id, "json": 1,
+                }, timeout=10).json()
+                if resultado.get("status") == 1:
+                    return resultado["request"]
+                if resultado.get("request") not in ("CAPCHA_NOT_READY", "CAPTCHA_NOT_READY"):
+                    raise Exception(f"2captcha error: {resultado.get('request')}")
+            raise Exception("2captcha tardo demasiado.")
+        except Exception as e:
+            ultimo_error = e
+            if "IP_BANNED" in str(e) and intento < intentos - 1:
+                time.sleep(3)
+                continue
+            raise
+    raise ultimo_error
 
 
 # ============================================================
