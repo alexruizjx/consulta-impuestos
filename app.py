@@ -491,8 +491,9 @@ def _sesion_antioquia(placa, identificacion, tipo_documento_id,
         raise Exception("La placa ingresada no coincide con la identificacion del propietario. Verifica los datos e intenta de nuevo.")
 
     opciones_nombre = (data1.get("preguntaNombrePropietario") or {}).get("opcionesPregunta", [])
+    primer_apellido = apellidos_propietario.upper().split()[0] if apellidos_propietario.strip() else ""
     nombre_encontrado = next(
-        (n for n in opciones_nombre if apellidos_propietario.upper() in n.upper()), None
+        (n for n in opciones_nombre if primer_apellido in n.upper()), None
     )
     if not nombre_encontrado:
         raise Exception(f"No se encontró propietario con apellidos '{apellidos_propietario}'. Opciones: {opciones_nombre}")
