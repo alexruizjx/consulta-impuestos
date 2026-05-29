@@ -896,7 +896,7 @@ def consultar_medellin(page, placa, identificacion, modelo, apellidos_propietari
     frame.get_by_role("radio", name="Vehículo de servicio público").check(timeout=30000)
 
     # Paso 1b — esperar que aparezca el segundo grupo y seleccionar matrícula en Medellín
-    frame.wait_for_selector("input[type='radio']:nth-of-type(3)", timeout=10000)
+    frame.get_by_role("radio", name="Vehículo matriculado en la Secretaría de Movilidad de Medellín").wait_for(state="visible", timeout=15000)
     frame.get_by_role("radio", name="Vehículo matriculado en la Secretaría de Movilidad de Medellín").check(timeout=15000)
     frame.get_by_role("button", name="Continuar").click()
 
