@@ -148,7 +148,7 @@ def cache_antioquia_buscar_vigencia(placa, anio):
             WHERE placa = %s AND vigencia = %s AND estado = 'CON_DEUDA'
               AND (expira_en IS NULL OR expira_en >= NOW())
             ORDER BY creado_en DESC LIMIT 1
-        """, (placa.upper(), str(anio)))
+        """, (placa.upper(), int(anio)))
         row = cur.fetchone()
         cur.close(); conn.close()
         if row:
@@ -167,7 +167,7 @@ def cache_antioquia_eliminar_vigencia(placa, anio):
         cur.execute("""
             DELETE FROM cache_impuestos_antioquia
             WHERE placa = %s AND vigencia = %s AND estado = 'CON_DEUDA'
-        """, (placa.upper(), str(anio)))
+        """, (placa.upper(), int(anio)))
         conn.commit()
         cur.close(); conn.close()
         print(f"  → Caché eliminado para {placa} vigencia {anio} (fue pagada)")
@@ -179,7 +179,7 @@ def cache_antioquia_guardar_paz_salvo(placa, avaluo, estado_veh):
     """Guarda en caché que la placa está a paz y salvo hasta fin de año."""
     try:
         anio_actual = datetime.now().year
-        expira = f"{anio_actual}-12-31 23:59:59"
+        expira = f"{anio_actual}-12-31"
         retefuente = round(avaluo / 100) if avaluo else 0
         conn = get_db_conn()
         cur  = conn.cursor()
@@ -230,6 +230,7 @@ def cache_antioquia_guardar_deuda(placa, vigencias_data, avaluo):
                     anio_exp += 1
                 expira = f"{anio_exp}-{mes_exp:02d}-{ahora.day:02d} 23:59:59"
 
+            expira_date = expira[:10]  # solo YYYY-MM-DD para columna date
             cur.execute("""
                 INSERT INTO cache_impuestos_antioquia
                     (placa, vigencia, total_pagar, avaluo_comercial, retefuente, estado, expira_en, creado_en)
@@ -241,7 +242,7 @@ def cache_antioquia_guardar_deuda(placa, vigencias_data, avaluo):
                     estado='CON_DEUDA',
                     expira_en=EXCLUDED.expira_en,
                     actualizado_en=NOW()
-            """, (placa.upper(), str(anio_vig), total, avaluo or 0, retefuente, expira))
+            """, (placa.upper(), int(anio_vig), total, avaluo or 0, retefuente, expira_date))
 
         conn.commit()
         cur.close(); conn.close()
