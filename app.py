@@ -870,69 +870,55 @@ def consultar_medellin(page, placa, identificacion, modelo, apellidos_propietari
 
     url = "https://www.medellin.gov.co/irj/portal/medellin/pago-impuesto-circulacion-transito"
     page.goto(url, wait_until="domcontentloaded", timeout=60000)
-    page.wait_for_timeout(5000)
 
-    # Cerrar banner haciendo click fuera de él
+    # Esperar que cargue el formulario
+    page.wait_for_selector("#placa", timeout=30000)
+
+    # Cerrar banner haciendo click fuera
     try:
         page.mouse.click(10, 10)
-        page.wait_for_timeout(1000)
+        page.wait_for_timeout(500)
     except Exception:
         pass
 
-    # Buscar el frame que contiene el formulario
-    def get_frame():
-        for f in page.frames:
-            try:
-                if f.locator("input[type='radio']").first.is_visible(timeout=2000):
-                    return f
-            except Exception:
-                pass
-        return page
+    # Paso 1 — placa y documento
+    page.locator("#placa").fill(placa.upper())
+    page.locator("#id").fill(identificacion)
+    page.locator("button.boton_consulta").click()
 
-    frame = get_frame()
+    # Esperar resultado
+    page.wait_for_function("""() => {
+        const pago = document.getElementById('pago');
+        const msgs = document.getElementById('mensajes');
+        return (pago && pago.innerText.trim().length > 10) ||
+               (msgs && msgs.innerText.trim().length > 5);
+    }""", timeout=30000)
 
-    # Paso 1a — seleccionar tipo de vehículo: servicio público
-    frame.wait_for_selector("input[type='radio']", timeout=30000)
-    frame.get_by_role("radio", name="Vehículo de servicio público").check(timeout=30000)
-
-    # Paso 1b — esperar que aparezca el segundo grupo y seleccionar matrícula en Medellín
-    frame.get_by_role("radio", name="Vehículo matriculado en la Secretaría de Movilidad de Medellín").wait_for(state="visible", timeout=15000)
-    frame.get_by_role("radio", name="Vehículo matriculado en la Secretaría de Movilidad de Medellín").check(timeout=15000)
-    frame.get_by_role("button", name="Continuar").click()
-
-    # Paso 2 — placa y documento
-    frame = get_frame()
-    frame.get_by_role("textbox", name="Placa del Vehículo").wait_for(state="visible", timeout=15000)
-    frame.get_by_role("textbox", name="Placa del Vehículo").fill(placa.upper())
-    frame.get_by_role("textbox", name="Documento de identidad").fill(identificacion)
-    frame.get_by_role("button", name="Consultar").click()
-
-    # Esperar tabla de vigencias o mensaje sin deuda
-    page.wait_for_timeout(3000)
-    frame = get_frame()
-    body_text = frame.inner_text("body").lower() if hasattr(frame, 'inner_text') else page.inner_text("body").lower()
+    body_text = page.inner_text("body").lower()
 
     if "no se encuentra matriculado" in body_text or "no está matriculado" in body_text:
         raise Exception("Este vehículo no está matriculado en la Secretaría de Movilidad de Medellín.")
     if "no presenta deuda" in body_text or "no adeuda" in body_text or "paz y salvo" in body_text:
         return [], 0
 
-    # Paso 3 — seleccionar todas las vigencias
-    frame = get_frame()
-    checkboxes = frame.locator("tr .containerCheck .checkmark").all()
+    # Paso 2 — seleccionar todas las vigencias y continuar
+    checkboxes = page.locator("tr .containerCheck .checkmark").all()
     for cb in checkboxes:
         try:
             cb.click()
         except Exception:
             pass
-    frame.get_by_role("button", name="Continuar").click()
+    page.locator("#btnContinuar").click()
 
-    # Paso 4 — modelo y propietario
-    frame = get_frame()
-    frame.get_by_role("textbox", name="Modelo del vehículo").wait_for(state="visible", timeout=15000)
-    frame.get_by_role("textbox", name="Modelo del vehículo").fill(str(modelo))
+    # Paso 3 — modelo y propietario
+    page.wait_for_selector("#modelo, input[name='modelo']", timeout=15000)
     try:
-        select_prop = frame.get_by_label("Nombre del propietario del")
+        page.locator("#modelo").fill(str(modelo))
+    except Exception:
+        pass
+
+    try:
+        select_prop = page.locator("#propietario, select[name='propietario']")
         opciones = select_prop.locator("option").all()
         if opciones:
             primer_valor = opciones[0].get_attribute("value")
@@ -944,19 +930,23 @@ def consultar_medellin(page, placa, identificacion, modelo, apellidos_propietari
             select_prop.select_option(primer_valor)
     except Exception:
         pass
-    frame.get_by_role("button", name="Continuar").click()
 
-    # Paso 5 — datos de contacto
-    frame = get_frame()
-    frame.get_by_role("textbox", name="Correo Electrónico").wait_for(state="visible", timeout=15000)
-    frame.get_by_role("textbox", name="Correo Electrónico").fill(email)
-    frame.get_by_role("textbox", name="Número de Celular").fill(celular)
+    page.locator("#btnContinuar").click()
+
+    # Paso 4 — datos de contacto
+    page.wait_for_selector("input[type='email'], input[name='email']", timeout=15000)
     try:
-        frame.get_by_role("textbox", name="Número Teléfono Fijo").fill("2379933")
+        page.locator("input[type='email'], input[name='email']").first.fill(email)
     except Exception:
         pass
-
-    # Dirección
+    try:
+        page.locator("input[name='celular'], input[id='celular']").fill(celular)
+    except Exception:
+        pass
+    try:
+        page.locator("input[name='telefono'], input[id='telefono']").fill("2379933")
+    except Exception:
+        pass
     try:
         page.get_by_label("Tipo de vía").select_option("CARRERA")
         page.locator("#numero1").fill("20")
@@ -965,35 +955,32 @@ def consultar_medellin(page, placa, identificacion, modelo, apellidos_propietari
         page.get_by_role("button", name="Agregar Dirección").click()
     except Exception:
         pass
-
-    # Departamento y municipio
     try:
         page.get_by_label("Departamento").select_option("05")
         page.get_by_label("Municipio de Residencia").select_option("000000005002")
     except Exception:
         pass
+    page.locator("#btnContinuar, button[name='guardar'], button:has-text('Guardar')").first.click()
 
-    page.get_by_role("button", name="Guardar").click()
-
-    # Esperar resultado
+    # Esperar tabla resultado
     page.wait_for_function("""() => {
-        const tabla = document.querySelector('table');
-        return tabla && tabla.innerText.length > 50;
+        const pago = document.getElementById('pago');
+        return pago && pago.querySelectorAll('table').length > 0;
     }""", timeout=30000)
 
-    # Extraer vigencias y valores de la tabla resultado
+    # Extraer vigencias y valores
     registros = []
-    filas = page.locator("table tr").all()
+    filas = page.locator("#pago table tr").all()
     for fila in filas:
         texto = fila.inner_text().strip()
         if not texto:
             continue
         anio = _re.search(r'\b(20\d{2}|19\d{2})\b', texto)
-        montos = _re.findall(r'[\d]+[\.,][\d]+', texto.replace('.', '').replace(',', '.'))
-        if anio and montos:
+        numeros = _re.findall(r'[\d]{4,}', texto.replace('.', '').replace(',', ''))
+        if anio and numeros:
             try:
-                valor = int(float(montos[-1]))
-                if valor > 0:
+                valor = int(numeros[-1])
+                if valor > 1000:
                     registros.append({
                         'vigencia': anio.group(),
                         'estado': 'Pendiente de pago',
