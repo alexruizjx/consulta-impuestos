@@ -109,7 +109,8 @@ def job_error(job_id, mensaje_error):
 # ============================================================
 
 def cache_antioquia_buscar(placa):
-    """Busca PAZ_Y_SALVO en caché para el año actual."""    try:
+    """Busca PAZ_Y_SALVO en caché para el año actual."""
+    try:
         anio_actual = datetime.now().year
         conn = get_db_conn()
         cur  = conn.cursor()
@@ -137,7 +138,8 @@ def cache_antioquia_buscar(placa):
 
 
 def cache_antioquia_buscar_vigencia(placa, anio):
-    """Busca el valor cacheado de una vigencia específica con deuda."""    try:
+    """Busca el valor cacheado de una vigencia específica con deuda."""
+    try:
         conn = get_db_conn()
         cur  = conn.cursor()
         cur.execute("""
@@ -158,7 +160,8 @@ def cache_antioquia_buscar_vigencia(placa, anio):
 
 
 def cache_antioquia_eliminar_vigencia(placa, anio):
-    """Elimina del caché una vigencia que ya fue pagada."""    try:
+    """Elimina del caché una vigencia que ya fue pagada."""
+    try:
         conn = get_db_conn()
         cur  = conn.cursor()
         cur.execute("""
