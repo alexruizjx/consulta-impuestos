@@ -861,6 +861,143 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento_abrev,
     return registros, total_suma, avaluo_actual or avaluo, estado_veh, excede_limite
 
 
+
+def consultar_medellin(page, placa, identificacion, modelo, apellidos_propietario,
+                       celular="3208578787", email="consulta@consulta.com",
+                       direccion="CRA 20 20 20"):
+    """Consulta impuesto municipal de Medellín (servicio público)."""
+    import re as _re
+
+    url = "https://www.medellin.gov.co/irj/portal/medellin/pago-impuesto-circulacion-transito"
+    page.goto(url, wait_until="domcontentloaded", timeout=60000)
+
+    # Cerrar popup si aparece
+    try:
+        popup = page.locator("div").filter(has_text=_re.compile(r"^X$")).first
+        if popup.is_visible(timeout=3000):
+            popup.click()
+    except Exception:
+        pass
+
+    # Paso 1 — seleccionar matrícula en Medellín y continuar
+    page.get_by_role("radio", name="Vehículo matriculado en la").check()
+    page.get_by_role("button", name="Continuar").click()
+
+    # Paso 2 — placa y documento
+    page.get_by_role("textbox", name="Placa del Vehículo").wait_for(state="visible", timeout=15000)
+    page.get_by_role("textbox", name="Placa del Vehículo").fill(placa.upper())
+    page.get_by_role("textbox", name="Documento de identidad").fill(identificacion)
+    page.get_by_role("button", name="Consultar").click()
+
+    # Esperar tabla de vigencias o mensaje sin deuda
+    page.wait_for_function("""() => {
+        const tabla = document.querySelector('table.tabla_liquidacion, table[class*="tabla"]');
+        const sinDeuda = document.body.innerText.includes('no presenta deuda') ||
+                         document.body.innerText.includes('no adeuda') ||
+                         document.body.innerText.includes('paz y salvo');
+        const noMatriculado = document.body.innerText.includes('no se encuentra matriculado') ||
+                              document.body.innerText.includes('no está matriculado');
+        return tabla || sinDeuda || noMatriculado;
+    }""", timeout=30000)
+
+    # Verificar si no está matriculado en Medellín
+    body_text = page.inner_text("body").lower()
+    if "no se encuentra matriculado" in body_text or "no está matriculado" in body_text:
+        raise Exception("Este vehículo no está matriculado en la Secretaría de Movilidad de Medellín.")
+
+    # Verificar paz y salvo
+    if "no presenta deuda" in body_text or "no adeuda" in body_text or "paz y salvo" in body_text:
+        return [], 0
+
+    # Paso 3 — seleccionar todas las vigencias
+    checkboxes = page.locator("tr .containerCheck .checkmark").all()
+    for cb in checkboxes:
+        try:
+            cb.click()
+        except Exception:
+            pass
+    page.get_by_role("button", name="Continuar").click()
+
+    # Paso 4 — modelo y propietario
+    page.get_by_role("textbox", name="Modelo del vehículo").wait_for(state="visible", timeout=15000)
+    page.get_by_role("textbox", name="Modelo del vehículo").fill(str(modelo))
+
+    # Seleccionar primer propietario si hay opciones
+    try:
+        select_prop = page.get_by_label("Nombre del propietario del")
+        opciones = select_prop.locator("option").all()
+        if opciones:
+            primer_valor = opciones[0].get_attribute("value")
+            # Buscar por apellido si hay múltiples opciones
+            for op in opciones:
+                texto = (op.inner_text() or "").upper()
+                if apellidos_propietario and apellidos_propietario.split()[0].upper() in texto:
+                    primer_valor = op.get_attribute("value")
+                    break
+            select_prop.select_option(primer_valor)
+    except Exception:
+        pass
+
+    page.get_by_role("button", name="Continuar").click()
+
+    # Paso 5 — datos de contacto
+    page.get_by_role("textbox", name="Correo Electrónico").wait_for(state="visible", timeout=15000)
+    page.get_by_role("textbox", name="Correo Electrónico").fill(email)
+    page.get_by_role("textbox", name="Número de Celular").fill(celular)
+    try:
+        page.get_by_role("textbox", name="Número Teléfono Fijo").fill("2379933")
+    except Exception:
+        pass
+
+    # Dirección
+    try:
+        page.get_by_label("Tipo de vía").select_option("CARRERA")
+        page.locator("#numero1").fill("20")
+        page.locator("#numero2").fill("20")
+        page.locator("#numero3").fill("20")
+        page.get_by_role("button", name="Agregar Dirección").click()
+    except Exception:
+        pass
+
+    # Departamento y municipio
+    try:
+        page.get_by_label("Departamento").select_option("05")
+        page.get_by_label("Municipio de Residencia").select_option("000000005002")
+    except Exception:
+        pass
+
+    page.get_by_role("button", name="Guardar").click()
+
+    # Esperar resultado
+    page.wait_for_function("""() => {
+        const tabla = document.querySelector('table');
+        return tabla && tabla.innerText.length > 50;
+    }""", timeout=30000)
+
+    # Extraer vigencias y valores de la tabla resultado
+    registros = []
+    filas = page.locator("table tr").all()
+    for fila in filas:
+        texto = fila.inner_text().strip()
+        if not texto:
+            continue
+        anio = _re.search(r'\b(20\d{2}|19\d{2})\b', texto)
+        montos = _re.findall(r'[\d]+[\.,][\d]+', texto.replace('.', '').replace(',', '.'))
+        if anio and montos:
+            try:
+                valor = int(float(montos[-1]))
+                if valor > 0:
+                    registros.append({
+                        'vigencia': anio.group(),
+                        'estado': 'Pendiente de pago',
+                        'total_vigencia': valor
+                    })
+            except ValueError:
+                pass
+
+    total = sum(r['total_vigencia'] for r in registros)
+    return registros, total
+
 # ============================================================
 #  MAPA DE MUNICIPIOS
 # ============================================================
@@ -871,6 +1008,8 @@ MUNICIPIOS = {
     "bello":       consultar_bello,
     "laestrella":  consultar_laestrella,
     "la estrella": consultar_laestrella,
+    "medellin":    consultar_medellin,
+    "medellín":    consultar_medellin,
 }
 
 
