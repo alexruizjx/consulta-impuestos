@@ -1056,7 +1056,15 @@ def consultar():
                     if municipio not in ["bello", "sabaneta", "laestrella"]:
                         bloquear_recursos(page)
                     funcion = MUNICIPIOS[municipio]
-                    registros, total = funcion(page, placa)
+                    if municipio == "medellin":
+                        registros, total = funcion(page, placa,
+                            identificacion=identificacion,
+                            modelo=modelo,
+                            apellidos_propietario=apellidos,
+                            celular=celular,
+                            email=email)
+                    else:
+                        registros, total = funcion(page, placa)
                     resultado['registros'] = registros
                     resultado['total']     = total
                     context.close(); browser.close()
