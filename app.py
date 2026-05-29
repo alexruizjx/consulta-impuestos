@@ -871,17 +871,33 @@ def consultar_medellin(page, placa, identificacion, modelo, apellidos_propietari
     url = "https://www.medellin.gov.co/irj/portal/medellin/pago-impuesto-circulacion-transito"
     page.goto(url, wait_until="domcontentloaded", timeout=60000)
 
-    # Esperar que cargue el formulario
-    page.wait_for_selector("#placa", timeout=30000)
+    # Esperar que cargue el popup de validación
+    page.wait_for_selector("#popupValidacion", timeout=30000)
 
-    # Cerrar banner haciendo click fuera
+    # Cerrar popup de imagen si aparece
     try:
-        page.mouse.click(10, 10)
-        page.wait_for_timeout(500)
+        cerrar = page.locator(".divCerrarPopup")
+        if cerrar.is_visible(timeout=3000):
+            cerrar.click()
+            page.wait_for_timeout(500)
     except Exception:
         pass
 
-    # Paso 1 — placa y documento
+    # Paso 1a — seleccionar servicio público en el popup
+    page.locator("input[name='tipoVehiculo'][value='publico']").check()
+    page.wait_for_timeout(500)
+
+    # Paso 1b — seleccionar matrícula en Medellín
+    page.wait_for_selector("#matriculaLugar", timeout=5000)
+    page.locator("input[name='lugarMatricula'][value='medellin']").check()
+    page.wait_for_timeout(500)
+
+    # Paso 1c — click en Continuar (se habilita después de seleccionar ambos)
+    page.wait_for_function("() => !document.getElementById('btnContinuar').disabled", timeout=5000)
+    page.locator("#btnContinuar").click()
+
+    # Paso 2 — llenar placa y documento
+    page.wait_for_selector("#placa", timeout=15000)
     page.locator("#placa").fill(placa.upper())
     page.locator("#id").fill(identificacion)
     page.locator("button.boton_consulta").click()
@@ -901,7 +917,7 @@ def consultar_medellin(page, placa, identificacion, modelo, apellidos_propietari
     if "no presenta deuda" in body_text or "no adeuda" in body_text or "paz y salvo" in body_text:
         return [], 0
 
-    # Paso 2 — seleccionar todas las vigencias y continuar
+    # Paso 3 — seleccionar todas las vigencias y continuar
     checkboxes = page.locator("tr .containerCheck .checkmark").all()
     for cb in checkboxes:
         try:
@@ -910,13 +926,12 @@ def consultar_medellin(page, placa, identificacion, modelo, apellidos_propietari
             pass
     page.locator("#btnContinuar").click()
 
-    # Paso 3 — modelo y propietario
+    # Paso 4 — modelo y propietario
     page.wait_for_selector("#modelo, input[name='modelo']", timeout=15000)
     try:
         page.locator("#modelo").fill(str(modelo))
     except Exception:
         pass
-
     try:
         select_prop = page.locator("#propietario, select[name='propietario']")
         opciones = select_prop.locator("option").all()
@@ -930,10 +945,9 @@ def consultar_medellin(page, placa, identificacion, modelo, apellidos_propietari
             select_prop.select_option(primer_valor)
     except Exception:
         pass
-
     page.locator("#btnContinuar").click()
 
-    # Paso 4 — datos de contacto
+    # Paso 5 — datos de contacto
     page.wait_for_selector("input[type='email'], input[name='email']", timeout=15000)
     try:
         page.locator("input[type='email'], input[name='email']").first.fill(email)
