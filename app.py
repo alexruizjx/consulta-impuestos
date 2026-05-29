@@ -780,7 +780,7 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento_abrev,
             WHERE placa = %s AND estado = 'CON_DEUDA'
               AND (expira_en IS NULL OR expira_en >= NOW())
         """, (placa.upper(),))
-        anios_en_cache = set(r[0] for r in cur_c.fetchall())
+        anios_en_cache = set(str(r[0]) for r in cur_c.fetchall())
         cur_c.close(); conn_c.close()
         for anio_pagado in (anios_en_cache - anios_adeudados):
             cache_antioquia_eliminar_vigencia(placa, anio_pagado)
@@ -827,10 +827,14 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento_abrev,
                     if total_pagar is not None:
                         print(f"  ✔ Vigencia {anio}: ${total_pagar:,}")
                         # Guardar en caché
-                        cache_antioquia_guardar_deuda(placa, [{
-                            'vigencia': anio,
-                            'total_pagar': total_pagar,
-                        }], avaluo_vig or avaluo)
+                        try:
+                            cache_antioquia_guardar_deuda(placa, [{
+                                'vigencia': anio,
+                                'total_pagar': total_pagar,
+                            }], avaluo_vig or avaluo)
+                            print(f"  → Caché guardado exitosamente para {placa} vigencia {anio}")
+                        except Exception as ce:
+                            print(f"  ✖ Error guardando caché vigencia {anio}: {ce}")
                         break
                 except Exception as e:
                     print(f"  ✖ Error vigencia {anio} intento {intento}: {e}")
