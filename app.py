@@ -109,19 +109,16 @@ def job_error(job_id, mensaje_error):
 # ============================================================
 
 def cache_antioquia_buscar(placa):
-    """Busca en caché si la placa tiene resultado válido para el año actual."""
-    try:
+    """Busca PAZ_Y_SALVO en caché para el año actual."""    try:
         anio_actual = datetime.now().year
         conn = get_db_conn()
         cur  = conn.cursor()
         cur.execute("""
             SELECT estado, total_pagar, avaluo_comercial, retefuente, vigencia
             FROM cache_impuestos_antioquia
-            WHERE placa = %s
-              AND vigencia = %s
+            WHERE placa = %s AND vigencia = %s AND estado = 'PAZ_Y_SALVO'
               AND (expira_en IS NULL OR expira_en >= NOW())
-            ORDER BY creado_en DESC
-            LIMIT 1
+            ORDER BY creado_en DESC LIMIT 1
         """, (placa.upper(), str(anio_actual)))
         row = cur.fetchone()
         cur.close(); conn.close()
@@ -137,6 +134,42 @@ def cache_antioquia_buscar(placa):
     except Exception as e:
         print(f"Error cache buscar: {e}")
         return None
+
+
+def cache_antioquia_buscar_vigencia(placa, anio):
+    """Busca el valor cacheado de una vigencia específica con deuda."""    try:
+        conn = get_db_conn()
+        cur  = conn.cursor()
+        cur.execute("""
+            SELECT total_pagar, avaluo_comercial, retefuente
+            FROM cache_impuestos_antioquia
+            WHERE placa = %s AND vigencia = %s AND estado = 'CON_DEUDA'
+              AND (expira_en IS NULL OR expira_en >= NOW())
+            ORDER BY creado_en DESC LIMIT 1
+        """, (placa.upper(), str(anio)))
+        row = cur.fetchone()
+        cur.close(); conn.close()
+        if row:
+            return {"total_pagar": row[0] or 0, "avaluo": row[1] or 0, "retefuente": row[2] or 0}
+        return None
+    except Exception as e:
+        print(f"Error cache buscar vigencia: {e}")
+        return None
+
+
+def cache_antioquia_eliminar_vigencia(placa, anio):
+    """Elimina del caché una vigencia que ya fue pagada."""    try:
+        conn = get_db_conn()
+        cur  = conn.cursor()
+        cur.execute("""
+            DELETE FROM cache_impuestos_antioquia
+            WHERE placa = %s AND vigencia = %s AND estado = 'CON_DEUDA'
+        """, (placa.upper(), str(anio)))
+        conn.commit()
+        cur.close(); conn.close()
+        print(f"  → Caché eliminado para {placa} vigencia {anio} (fue pagada)")
+    except Exception as e:
+        print(f"Error cache eliminar vigencia: {e}")
 
 
 def cache_antioquia_guardar_paz_salvo(placa, avaluo, estado_veh):
@@ -161,6 +194,57 @@ def cache_antioquia_guardar_paz_salvo(placa, avaluo, estado_veh):
         print(f"  → Caché guardado PAZ_Y_SALVO para {placa}")
     except Exception as e:
         print(f"Error cache guardar paz y salvo: {e}")
+
+
+def cache_antioquia_guardar_deuda(placa, vigencias_data, avaluo):
+    """Guarda en caché vigencias con deuda.
+    - Vigencia año actual antes del 1 agosto: expira el 31 de julio
+    - Vigencia año actual desde 1 agosto, y vigencias anteriores: expira en 2 meses
+    """
+    try:
+        ahora       = datetime.now()
+        anio_actual = ahora.year
+        conn = get_db_conn()
+        cur  = conn.cursor()
+        retefuente = round(avaluo / 100) if avaluo else 0
+
+        for vig in vigencias_data:
+            anio_vig   = int(vig.get('vigencia', 0))
+            total      = vig.get('total_pagar', 0) or 0
+
+            # Calcular expiración según reglas
+            es_anio_actual    = (anio_vig == anio_actual)
+            antes_de_agosto   = ahora.month < 8  # antes del 1 de agosto
+
+            if es_anio_actual and antes_de_agosto:
+                expira = f"{anio_actual}-07-31 23:59:59"
+            else:
+                # 2 meses desde ahora
+                mes_exp  = ahora.month + 2
+                anio_exp = anio_actual
+                if mes_exp > 12:
+                    mes_exp  -= 12
+                    anio_exp += 1
+                expira = f"{anio_exp}-{mes_exp:02d}-{ahora.day:02d} 23:59:59"
+
+            cur.execute("""
+                INSERT INTO cache_impuestos_antioquia
+                    (placa, vigencia, total_pagar, avaluo_comercial, retefuente, estado, expira_en, creado_en)
+                VALUES (%s, %s, %s, %s, %s, 'CON_DEUDA', %s, NOW())
+                ON CONFLICT (placa, vigencia) DO UPDATE SET
+                    total_pagar=EXCLUDED.total_pagar,
+                    avaluo_comercial=EXCLUDED.avaluo_comercial,
+                    retefuente=EXCLUDED.retefuente,
+                    estado='CON_DEUDA',
+                    expira_en=EXCLUDED.expira_en,
+                    actualizado_en=NOW()
+            """, (placa.upper(), str(anio_vig), total, avaluo or 0, retefuente, expira))
+
+        conn.commit()
+        cur.close(); conn.close()
+        print(f"  → Caché CON_DEUDA guardado para {placa}: {[v.get('vigencia') for v in vigencias_data]}")
+    except Exception as e:
+        print(f"Error cache guardar deuda: {e}")
 
 
 def bloquear_recursos(page):
@@ -680,6 +764,25 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento_abrev,
     retefuente_actual = 0
     MAX_INTENTOS      = 2
 
+    # Vigencias actualmente adeudadas según el portal
+    anios_adeudados = set(str(v.get("vigencia")) for v in vigencias_a_consultar)
+
+    # Limpiar del caché las vigencias que ya fueron pagadas
+    try:
+        conn_c = get_db_conn()
+        cur_c  = conn_c.cursor()
+        cur_c.execute("""
+            SELECT vigencia FROM cache_impuestos_antioquia
+            WHERE placa = %s AND estado = 'CON_DEUDA'
+              AND (expira_en IS NULL OR expira_en >= NOW())
+        """, (placa.upper(),))
+        anios_en_cache = set(r[0] for r in cur_c.fetchall())
+        cur_c.close(); conn_c.close()
+        for anio_pagado in (anios_en_cache - anios_adeudados):
+            cache_antioquia_eliminar_vigencia(placa, anio_pagado)
+    except Exception as e:
+        print(f"  → Error limpiando caché: {e}")
+
     for v in vigencias_a_consultar:
         anio = v.get("vigencia")
         if job_id:
@@ -689,33 +792,44 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento_abrev,
         total_pagar  = None
         avaluo_vig   = 0
 
-        for intento in range(1, MAX_INTENTOS + 1):
-            if intento > 1:
-                print(f"  ↺ Reintentando vigencia {anio}...")
-            try:
-                session_v, token_v, _ = _sesion_antioquia(
-                    placa, identificacion, tipo_documento_id,
-                    modelo, municipio_transito, apellidos_propietario
-                )
-                data_vig = _consultar_vigencia_antioquia(
-                    anio, session_v, token_v,
-                    placa, identificacion, tipo_documento_id,
-                    doc_abreviatura, doc_nombre,
-                    celular, email, direccion, municipio, municipio_cod, departamento_cod
-                )
-                # Mostrar error del servidor si lo hay
-                _msg    = data_vig.get("mensaje") or data_vig.get("descripcion")
-                _codigo = data_vig.get("codigo")
-                if _codigo and _codigo != 1 and _msg:
-                    print(f"  ✖ Error servidor vigencia {anio}: {_msg}")
+        # Intentar desde caché primero
+        cache_vig = cache_antioquia_buscar_vigencia(placa, anio)
+        if cache_vig:
+            total_pagar = cache_vig['total_pagar']
+            avaluo_vig  = cache_vig['avaluo']
+            print(f"  ✔ Vigencia {anio} desde caché: ${total_pagar:,}")
+        else:
+            for intento in range(1, MAX_INTENTOS + 1):
+                if intento > 1:
+                    print(f"  ↺ Reintentando vigencia {anio}...")
+                try:
+                    session_v, token_v, _ = _sesion_antioquia(
+                        placa, identificacion, tipo_documento_id,
+                        modelo, municipio_transito, apellidos_propietario
+                    )
+                    data_vig = _consultar_vigencia_antioquia(
+                        anio, session_v, token_v,
+                        placa, identificacion, tipo_documento_id,
+                        doc_abreviatura, doc_nombre,
+                        celular, email, direccion, municipio, municipio_cod, departamento_cod
+                    )
+                    _msg    = data_vig.get("mensaje") or data_vig.get("descripcion")
+                    _codigo = data_vig.get("codigo")
+                    if _codigo and _codigo != 1 and _msg:
+                        print(f"  ✖ Error servidor vigencia {anio}: {_msg}")
 
-                total_pagar = data_vig.get("totalPagar")
-                avaluo_vig  = data_vig.get("avaluoComercial", 0) or 0
-                if total_pagar is not None:
-                    print(f"  ✔ Vigencia {anio}: ${total_pagar:,}")
-                    break
-            except Exception as e:
-                print(f"  ✖ Error vigencia {anio} intento {intento}: {e}")
+                    total_pagar = data_vig.get("totalPagar")
+                    avaluo_vig  = data_vig.get("avaluoComercial", 0) or 0
+                    if total_pagar is not None:
+                        print(f"  ✔ Vigencia {anio}: ${total_pagar:,}")
+                        # Guardar en caché
+                        cache_antioquia_guardar_deuda(placa, [{
+                            'vigencia': anio,
+                            'total_pagar': total_pagar,
+                        }], avaluo_vig or avaluo)
+                        break
+                except Exception as e:
+                    print(f"  ✖ Error vigencia {anio} intento {intento}: {e}")
 
         if not avaluo_actual and avaluo_vig:
             avaluo_actual     = avaluo_vig
@@ -898,6 +1012,7 @@ def consultar_antioquia_vigencias():
             "desde_cache": True,
         })
 
+
     resultado       = {}
     error_container = {}
 
@@ -919,7 +1034,7 @@ def consultar_antioquia_vigencias():
             resultado['avaluo']     = avaluo
             resultado['estado_veh'] = estado_veh
             resultado['sin_deuda']  = len(vigencias_adeudadas) == 0
-            # Guardar en caché si está a paz y salvo (solo si hay avaluo, para evitar cachear errores)
+            # Guardar en caché si está a paz y salvo
             if not vigencias_adeudadas and avaluo and avaluo > 0:
                 cache_antioquia_guardar_paz_salvo(placa, avaluo, estado_veh)
         except Exception as e:
@@ -936,12 +1051,15 @@ def consultar_antioquia_vigencias():
         return jsonify({"error": error_container['error']}), 500
 
     estado_veh = resultado.get('estado_veh', {})
+    avaluo     = resultado.get('avaluo', 0)
+    vigencias  = resultado.get('vigencias', [])
+
     return jsonify({
         "placa":      placa,
         "sin_deuda":  resultado.get('sin_deuda', True),
-        "avaluo":     resultado.get('avaluo', 0),
-        "retefuente": round(resultado.get('avaluo', 0) / 100) if resultado.get('avaluo') else 0,
-        "vigencias":  resultado.get('vigencias', []),
+        "avaluo":     avaluo,
+        "retefuente": round(avaluo / 100) if avaluo else 0,
+        "vigencias":  vigencias,
         "placa_info": {
             "marca":       estado_veh.get("marca", ""),
             "linea":       estado_veh.get("linea", ""),
