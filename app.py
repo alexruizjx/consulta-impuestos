@@ -871,7 +871,7 @@ def consultar_medellin(page, placa, identificacion, modelo, apellidos_propietari
     url = "https://www.medellin.gov.co/irj/portal/medellin/pago-impuesto-circulacion-transito"
     page.goto(url, wait_until="domcontentloaded", timeout=60000)
 
-    # Esperar que cargue el popup de validación
+    # Esperar popup de validación
     page.wait_for_selector("#popupValidacion", timeout=30000)
 
     # Cerrar popup de imagen si aparece
@@ -883,16 +883,12 @@ def consultar_medellin(page, placa, identificacion, modelo, apellidos_propietari
     except Exception:
         pass
 
-    # Paso 1a — seleccionar servicio público en el popup
+    # Paso 1 — seleccionar servicio público y matrícula Medellín
     page.locator("input[name='tipoVehiculo'][value='publico']").check()
     page.wait_for_timeout(500)
-
-    # Paso 1b — seleccionar matrícula en Medellín
     page.wait_for_selector("#matriculaLugar", timeout=5000)
     page.locator("input[name='lugarMatricula'][value='medellin']").check()
     page.wait_for_timeout(500)
-
-    # Paso 1c — click en Continuar (se habilita después de seleccionar ambos)
     page.wait_for_function("() => !document.getElementById('btnContinuar').disabled", timeout=5000)
     page.locator("#btnContinuar").click()
 
@@ -902,99 +898,29 @@ def consultar_medellin(page, placa, identificacion, modelo, apellidos_propietari
     page.locator("#id").fill(identificacion)
     page.locator("button.boton_consulta").click()
 
-    # Esperar resultado
-    page.wait_for_function("""() => {
-        const pago = document.getElementById('pago');
-        const msgs = document.getElementById('mensajes');
-        return (pago && pago.innerText.trim().length > 10) ||
-               (msgs && msgs.innerText.trim().length > 5);
-    }""", timeout=30000)
+    # Esperar tabla de vigencias en paso 1 (Estado de cuenta)
+    page.wait_for_selector("#cont_paso1 table tbody tr", timeout=30000)
 
     body_text = page.inner_text("body").lower()
-
     if "no se encuentra matriculado" in body_text or "no está matriculado" in body_text:
         raise Exception("Este vehículo no está matriculado en la Secretaría de Movilidad de Medellín.")
     if "no presenta deuda" in body_text or "no adeuda" in body_text or "paz y salvo" in body_text:
         return [], 0
 
-    # Paso 3 — seleccionar todas las vigencias y continuar
-    checkboxes = page.locator("tr .containerCheck .checkmark").all()
-    for cb in checkboxes:
-        try:
-            cb.click()
-        except Exception:
-            pass
-    page.locator("#btnContinuar").click()
-
-    # Paso 4 — modelo y propietario
-    page.wait_for_selector("#modelo, input[name='modelo']", timeout=15000)
-    try:
-        page.locator("#modelo").fill(str(modelo))
-    except Exception:
-        pass
-    try:
-        select_prop = page.locator("#propietario, select[name='propietario']")
-        opciones = select_prop.locator("option").all()
-        if opciones:
-            primer_valor = opciones[0].get_attribute("value")
-            for op in opciones:
-                texto = (op.inner_text() or "").upper()
-                if apellidos_propietario and apellidos_propietario.split()[0].upper() in texto:
-                    primer_valor = op.get_attribute("value")
-                    break
-            select_prop.select_option(primer_valor)
-    except Exception:
-        pass
-    page.locator("#btnContinuar").click()
-
-    # Paso 5 — datos de contacto
-    page.wait_for_selector("input[type='email'], input[name='email']", timeout=15000)
-    try:
-        page.locator("input[type='email'], input[name='email']").first.fill(email)
-    except Exception:
-        pass
-    try:
-        page.locator("input[name='celular'], input[id='celular']").fill(celular)
-    except Exception:
-        pass
-    try:
-        page.locator("input[name='telefono'], input[id='telefono']").fill("2379933")
-    except Exception:
-        pass
-    try:
-        page.get_by_label("Tipo de vía").select_option("CARRERA")
-        page.locator("#numero1").fill("20")
-        page.locator("#numero2").fill("20")
-        page.locator("#numero3").fill("20")
-        page.get_by_role("button", name="Agregar Dirección").click()
-    except Exception:
-        pass
-    try:
-        page.get_by_label("Departamento").select_option("05")
-        page.get_by_label("Municipio de Residencia").select_option("000000005002")
-    except Exception:
-        pass
-    page.locator("#btnContinuar, button[name='guardar'], button:has-text('Guardar')").first.click()
-
-    # Esperar tabla resultado
-    page.wait_for_function("""() => {
-        const pago = document.getElementById('pago');
-        return pago && pago.querySelectorAll('table').length > 0;
-    }""", timeout=30000)
-
-    # Extraer vigencias y valores
+    # Extraer vigencias directamente de la tabla del paso 1
     registros = []
-    filas = page.locator("#pago table tr").all()
+    filas = page.locator("#cont_paso1 table tbody tr").all()
     for fila in filas:
         texto = fila.inner_text().strip()
         if not texto:
             continue
         anio = _re.search(r'\b(20\d{2}|19\d{2})\b', texto)
-        numeros = _re.findall(r'[\d]{4,}', texto.replace('.', '').replace(',', ''))
-        if anio and numeros:
+        # El impuesto viene como $22.932 — extraer solo ese valor
+        valor_match = _re.search(r'\$([\d\.]+)', texto)
+        if anio and valor_match:
             try:
-                valor = int(numeros[-1])
-                if valor > 1000:
+                valor = int(valor_match.group(1).replace('.', ''))
+                if valor > 0:
                     registros.append({
                         'vigencia': anio.group(),
                         'estado': 'Pendiente de pago',
