@@ -871,24 +871,18 @@ def consultar_medellin(page, placa, identificacion, modelo, apellidos_propietari
     url = "https://www.medellin.gov.co/irj/portal/medellin/pago-impuesto-circulacion-transito"
     page.goto(url, wait_until="domcontentloaded", timeout=60000)
 
-    # Esperar a que cargue el formulario
-    page.wait_for_selector("input[type='radio']", timeout=60000)
+    # Esperar a que cargue la página
+    page.wait_for_timeout(3000)
 
-    # Cerrar banner/popup si aparece (puede bloquear los elementos)
+    # Cerrar banner haciendo click fuera de él (en una esquina de la página)
     try:
-        for selector in ["div:has-text('X')", "button:has-text('X')", "[class*='close']", "[class*='cerrar']"]:
-            try:
-                el = page.locator(selector).first
-                if el.is_visible(timeout=2000):
-                    el.click()
-                    page.wait_for_timeout(500)
-                    break
-            except Exception:
-                pass
+        page.mouse.click(10, 10)
+        page.wait_for_timeout(1000)
     except Exception:
         pass
 
-    # Paso 1 — seleccionar matrícula en Medellín y continuar
+    # Esperar el formulario y seleccionar matrícula en Medellín
+    page.wait_for_selector("input[type='radio']", timeout=60000)
     page.get_by_role("radio", name="Vehículo matriculado en la").check(timeout=30000)
     page.get_by_role("button", name="Continuar").click()
 
