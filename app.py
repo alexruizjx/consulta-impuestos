@@ -662,8 +662,10 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento_abrev,
         else:
             job_actualizar(job_id, f"Encontré {len(vigencias_adeudadas)} año(s) con impuesto pendiente. Consultando valores...")
 
-    # Paz y salvo
+    # Paz y salvo — solo retornar si el avaluo es confiable (> 0)
     if not vigencias_adeudadas:
+        if not avaluo or avaluo == 0:
+            raise Exception("No se pudo obtener información completa del vehículo. Por favor intente de nuevo.")
         return [], 0, avaluo, estado_veh, False
 
     total_vigencias       = len(vigencias_adeudadas)
