@@ -941,6 +941,45 @@ def consultar():
             "sin_deuda": resultado.get('total', 0) == 0
         })
 
+    # Antioquia — verificar caché de vigencias antes de lanzar Playwright
+    # El snippet pasa las vigencias adeudadas que ya conoce del paso 1
+    vigencias_param = request.args.get("vigencias", "").strip()
+    if vigencias_param:
+        anios_solicitados = [a.strip() for a in vigencias_param.split(",") if a.strip()]
+        registros_cache = []
+        avaluo_cache    = 0
+        total_cache     = 0
+        todos_cacheados = True
+
+        for anio in anios_solicitados:
+            cv = cache_antioquia_buscar_vigencia(placa, anio)
+            if cv:
+                registros_cache.append({
+                    "vigencia":       str(anio),
+                    "estado":         "Pendiente de pago",
+                    "total_vigencia": cv['total_pagar'],
+                })
+                total_cache  += cv['total_pagar']
+                if not avaluo_cache:
+                    avaluo_cache = cv['avaluo']
+            else:
+                todos_cacheados = False
+                break
+
+        if todos_cacheados and registros_cache:
+            print(f"  → Cache hit completo para {placa} — respondiendo sin Playwright")
+            return jsonify({
+                "placa":      placa,
+                "municipio":  "antioquia",
+                "placa_info": {},
+                "registros":  registros_cache,
+                "total":      total_cache,
+                "avaluo":     avaluo_cache,
+                "retefuente": round(avaluo_cache / 100) if avaluo_cache else 0,
+                "sin_deuda":  False,
+                "desde_cache": True,
+            })
+
     # Antioquia — sistema asíncrono
     job_id = str(uuid.uuid4())[:12]
     job_actualizar(job_id, "Iniciando consulta...", "procesando")
