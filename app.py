@@ -972,26 +972,40 @@ def consultar_medellin(page, placa, identificacion, modelo, apellidos_propietari
     # Dirección — abrir popup y llenar
     try:
         page.locator("#direccion").click()
-        page.wait_for_selector("#tipo_via", timeout=5000)
+        page.wait_for_selector("#tipo_via", state="visible", timeout=5000)
         page.locator("#tipo_via").select_option("CARRERA")
         page.locator("#numero1").fill("20")
         page.locator("#numero2").fill("20")
         page.locator("#numero3").fill("20")
-        page.locator("button.boton_dir").click()
+        # Guardar dirección con evaluate para bypass validación
+        page.locator("button.boton_dir").evaluate("el => el.click()")
         page.wait_for_timeout(1000)
-    except Exception:
-        pass
+        # Verificar que la dirección quedó guardada
+        dir_val = page.locator("#direccion").input_value()
+        print(f"[MED] Dirección guardada: '{dir_val}'")
+    except Exception as e:
+        print(f"[MED] Error dirección: {e}")
+        # Si falla el popup, inyectar la dirección directamente
+        try:
+            page.evaluate("document.getElementById('direccion').removeAttribute('readonly')")
+            page.locator("#direccion").fill("CARRERA 20 20 20")
+        except Exception:
+            pass
 
     # Departamento y municipio
     try:
         page.locator("#departamento").select_option("05")
         page.wait_for_timeout(500)
         page.locator("#municipio").select_option("000000005001")
-    except Exception:
-        pass
+        page.wait_for_timeout(500)
+    except Exception as e:
+        print(f"[MED] Error depto/municipio: {e}")
 
-    # Guardar datos del propietario
-    page.locator("button.boton_continuar").click(timeout=10000)
+    # Guardar datos del propietario — bypass validación HTML5
+    print(f"[MED] Antes guardar: dir='{page.locator('#direccion').input_value()}', depto='{page.locator('#departamento').input_value()}', mun='{page.locator('#municipio').input_value()}'")
+    page.locator("button.boton_continuar").evaluate("el => el.click()")
+    page.wait_for_timeout(1500)
+    print(f"[MED] Tras guardar: cont_paso3_visible={page.locator('#cont_paso3').is_visible()}, tabla_filas={page.locator('#cont_paso3 table tbody tr').count()}")
 
     # Esperar tabla del paso 3 con valores reales
     page.wait_for_selector("#cont_paso3 table tbody tr", timeout=30000)
