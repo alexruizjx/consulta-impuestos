@@ -908,9 +908,22 @@ def consultar_medellin(page, placa, identificacion, modelo, apellidos_propietari
         return [], 0
 
     # Seleccionar todos los checkboxes de vigencias
-    page.locator(".sel_todo").click()
+    try:
+        page.locator(".sel_todo").click(timeout=3000)
+    except Exception:
+        pass
     page.wait_for_timeout(500)
-    page.locator("button.boton_continuar").click()
+    # Si no quedaron todos marcados, marcarlos uno a uno
+    checkboxes = page.locator("#cont_paso1 input[type='checkbox']").all()
+    for cb in checkboxes:
+        try:
+            if not cb.is_checked():
+                cb.check()
+        except Exception:
+            pass
+    page.wait_for_timeout(500)
+    # Click con JS para evitar problemas de intercepción
+    page.evaluate("document.querySelector('button.boton_continuar').click()")
 
     # Paso 2a — modelo y propietario
     page.wait_for_selector("#modelo_veh", timeout=15000)
@@ -963,7 +976,7 @@ def consultar_medellin(page, placa, identificacion, modelo, apellidos_propietari
         pass
 
     # Guardar datos del propietario
-    page.locator("button.boton_continuar").click()
+    page.evaluate("document.querySelector('button.boton_continuar').click()")
 
     # Esperar tabla del paso 3 con valores reales
     page.wait_for_selector("#cont_paso3 table tbody tr", timeout=30000)
