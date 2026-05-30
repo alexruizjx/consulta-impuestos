@@ -1003,11 +1003,19 @@ def consultar_medellin(page, placa, identificacion, modelo, apellidos_propietari
 
     # Guardar datos del propietario — bypass validación HTML5
     print(f"[MED] Antes guardar: dir='{page.locator('#direccion').input_value()}', depto='{page.locator('#departamento').input_value()}', mun='{page.locator('#municipio').input_value()}'")
-    # Contar botones boton_continuar disponibles
-    count_btn = page.locator("button.boton_continuar").count()
-    print(f"[MED] botones boton_continuar disponibles: {count_btn}")
-    # Tomar el primero visible
-    page.locator("button.boton_continuar").first.evaluate("el => el.click()")
+    # Listar todos los botones disponibles para debug
+    botones = page.locator("button").all()
+    info_btns = [(b.get_attribute("class") or "", b.get_attribute("form") or "", b.inner_text()[:30] if b.is_visible() else "[hidden]") for b in botones]
+    print(f"[MED] Todos los botones: {info_btns}")
+    # Intentar el botón de guardar del form info_propietario
+    try:
+        page.locator("button[form='info_propietario']").first.evaluate("el => el.click()")
+    except Exception:
+        # Si no existe, buscar boton_continuar o cualquier submit visible
+        try:
+            page.locator(".divContBotones button:not(.boton_cancelar)").first.evaluate("el => el.click()")
+        except Exception as e2:
+            print(f"[MED] Error click guardar: {e2}")
     page.wait_for_timeout(1500)
     print(f"[MED] Tras guardar: cont_paso3_visible={page.locator('#cont_paso3').is_visible()}, tabla_filas={page.locator('#cont_paso3 table tbody tr').count()}")
 
