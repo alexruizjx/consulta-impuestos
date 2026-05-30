@@ -922,16 +922,25 @@ def consultar_medellin(page, placa, identificacion, modelo, apellidos_propietari
         except Exception:
             pass
     page.wait_for_timeout(500)
-    # Usar locator directamente (el botón puede estar en un frame diferente al contexto de page.evaluate)
-    page.locator("button.boton_continuar").click(timeout=10000)
+    # Verificar que hay checkboxes marcados antes de continuar
+    marcados = page.locator("#cont_paso1 input[type='checkbox']:checked").count()
+    print(f"[MED] Checkboxes marcados: {marcados}")
+    btn = page.locator("button.boton_continuar")
+    disabled = btn.get_attribute("disabled")
+    print(f"[MED] boton_continuar disabled={disabled}")
+    # Forzar click aunque esté deshabilitado
+    btn.evaluate("el => el.click()")
+    page.wait_for_timeout(1000)
+    print(f"[MED] Tras click: cont_paso2_visible={page.locator('#cont_paso2').is_visible()}, modelo_veh_existe={page.locator('#modelo_veh').count()}")
 
     # Paso 2a — modelo y propietario
     page.wait_for_selector("#modelo_veh", timeout=15000)
     page.locator("#modelo_veh").fill(str(modelo))
 
-    # Seleccionar propietario por apellido
+    # Seleccionar propietario — primera opción disponible si no hay match por apellido
     try:
         opciones = page.locator("#nombres_props option.valorSel").all()
+        print(f"[MED] Opciones propietario: {[op.inner_text() for op in opciones]}")
         valor_sel = opciones[0].get_attribute("value") if opciones else None
         for op in opciones:
             texto = (op.inner_text() or "").upper()
@@ -940,10 +949,12 @@ def consultar_medellin(page, placa, identificacion, modelo, apellidos_propietari
                 break
         if valor_sel:
             page.locator("#nombres_props").select_option(valor_sel)
-    except Exception:
-        pass
+            print(f"[MED] Propietario seleccionado: {valor_sel}")
+    except Exception as e:
+        print(f"[MED] Error seleccionando propietario: {e}")
 
     page.locator("button.boton_validar").click()
+    print(f"[MED] Tras boton_validar: correo_existe={page.locator('#correo').count()}")
 
     # Paso 2b — datos de contacto del propietario
     page.wait_for_selector("#correo", timeout=15000)
