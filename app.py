@@ -935,7 +935,9 @@ def consultar_medellin(page, placa, identificacion, modelo, apellidos_propietari
 
     # Paso 2a — modelo y propietario
     page.wait_for_selector("#modelo_veh", timeout=15000)
-    page.locator("#modelo_veh").fill(str(modelo))
+    modelo_str = str(modelo).strip()[:4].zfill(4)
+    print(f"[MED] Modelo a llenar: '{modelo_str}'")
+    page.locator("#modelo_veh").fill(modelo_str)
 
     # Seleccionar propietario — primera opción disponible si no hay match por apellido
     try:
@@ -953,8 +955,10 @@ def consultar_medellin(page, placa, identificacion, modelo, apellidos_propietari
     except Exception as e:
         print(f"[MED] Error seleccionando propietario: {e}")
 
-    page.locator("button.boton_validar").click()
-    print(f"[MED] Tras boton_validar: correo_existe={page.locator('#correo').count()}")
+    # Forzar click en boton_validar ignorando validación HTML5
+    page.locator("button.boton_validar").evaluate("el => el.click()")
+    page.wait_for_timeout(1500)
+    print(f"[MED] Tras boton_validar: correo_existe={page.locator('#correo').count()}, cont_paso2_visible={page.locator('#cont_paso2').is_visible()}")
 
     # Paso 2b — datos de contacto del propietario
     page.wait_for_selector("#correo", timeout=15000)
