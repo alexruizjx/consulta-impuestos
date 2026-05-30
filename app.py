@@ -922,8 +922,13 @@ def consultar_medellin(page, placa, identificacion, modelo, apellidos_propietari
         except Exception:
             pass
     page.wait_for_timeout(500)
-    # Click con JS para evitar problemas de intercepción
-    page.evaluate("document.querySelector('button.boton_continuar').click()")
+    # Debug: identificar estado antes del click
+    count = page.locator('button.boton_continuar').count()
+    print(f"[MED-PASO1] botones boton_continuar={count}, cont_paso1_visible={page.locator('#cont_paso1').is_visible()}, cont_paso2_visible={page.locator('#cont_paso2').is_visible()}")
+    if count > 0:
+        page.evaluate("document.querySelector('button.boton_continuar').click()")
+    else:
+        raise Exception("[MED] boton_continuar no encontrado tras seleccionar vigencias")
 
     # Paso 2a — modelo y propietario
     page.wait_for_selector("#modelo_veh", timeout=15000)
