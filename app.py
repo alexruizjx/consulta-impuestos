@@ -924,25 +924,20 @@ def consultar_medellin(page, placa, identificacion, modelo, apellidos_propietari
     page.wait_for_timeout(500)
     # Verificar que hay checkboxes marcados antes de continuar
     marcados = page.locator("#cont_paso1 input[type='checkbox']:checked").count()
-    print(f"[MED] Checkboxes marcados: {marcados}")
     btn = page.locator("button.boton_continuar").first
     disabled = btn.get_attribute("disabled")
-    print(f"[MED] boton_continuar disabled={disabled}")
     # Forzar click aunque esté deshabilitado
     btn.evaluate("el => el.click()")
     page.wait_for_timeout(1000)
-    print(f"[MED] Tras click: cont_paso2_visible={page.locator('#cont_paso2').is_visible()}, modelo_veh_existe={page.locator('#modelo_veh').count()}")
 
     # Paso 2a — modelo y propietario
     page.wait_for_selector("#modelo_veh", timeout=15000)
     modelo_str = str(modelo).strip()[:4].zfill(4)
-    print(f"[MED] Modelo a llenar: '{modelo_str}'")
     page.locator("#modelo_veh").fill(modelo_str)
 
     # Seleccionar propietario — primera opción disponible si no hay match por apellido
     try:
         opciones = page.locator("#nombres_props option.valorSel").all()
-        print(f"[MED] Opciones propietario: {[op.inner_text() for op in opciones]}")
         valor_sel = opciones[0].get_attribute("value") if opciones else None
         for op in opciones:
             texto = (op.inner_text() or "").upper()
@@ -951,14 +946,12 @@ def consultar_medellin(page, placa, identificacion, modelo, apellidos_propietari
                 break
         if valor_sel:
             page.locator("#nombres_props").select_option(valor_sel)
-            print(f"[MED] Propietario seleccionado: {valor_sel}")
-    except Exception as e:
-        print(f"[MED] Error seleccionando propietario: {e}")
+    except Exception:
+        pass
 
     # Forzar click en boton_validar ignorando validación HTML5
     page.locator("button.boton_validar").evaluate("el => el.click()")
     page.wait_for_timeout(1500)
-    print(f"[MED] Tras boton_validar: correo_existe={page.locator('#correo').count()}, cont_paso2_visible={page.locator('#cont_paso2').is_visible()}")
 
     # Paso 2b — datos de contacto del propietario
     page.wait_for_selector("#correo", timeout=15000)
@@ -982,9 +975,7 @@ def consultar_medellin(page, placa, identificacion, modelo, apellidos_propietari
         page.wait_for_timeout(1000)
         # Verificar que la dirección quedó guardada
         dir_val = page.locator("#direccion").input_value()
-        print(f"[MED] Dirección guardada: '{dir_val}'")
     except Exception as e:
-        print(f"[MED] Error dirección: {e}")
         # Si falla el popup, inyectar la dirección directamente
         try:
             page.evaluate("document.getElementById('direccion').removeAttribute('readonly')")
@@ -999,14 +990,12 @@ def consultar_medellin(page, placa, identificacion, modelo, apellidos_propietari
         page.locator("#municipio").select_option("000000005001")
         page.wait_for_timeout(500)
     except Exception as e:
-        print(f"[MED] Error depto/municipio: {e}")
+        pass
 
     # Guardar datos del propietario — bypass validación HTML5
-    print(f"[MED] Antes guardar: dir='{page.locator('#direccion').input_value()}', depto='{page.locator('#departamento').input_value()}', mun='{page.locator('#municipio').input_value()}'")
     # Listar todos los botones disponibles para debug
     botones = page.locator("button").all()
     info_btns = [(b.get_attribute("class") or "", b.get_attribute("form") or "", b.inner_text()[:30] if b.is_visible() else "[hidden]") for b in botones]
-    print(f"[MED] Todos los botones: {info_btns}")
     # Intentar el botón de guardar del form info_propietario
     try:
         page.locator("button[form='info_propietario']").first.evaluate("el => el.click()")
@@ -1015,9 +1004,8 @@ def consultar_medellin(page, placa, identificacion, modelo, apellidos_propietari
         try:
             page.locator(".divContBotones button:not(.boton_cancelar)").first.evaluate("el => el.click()")
         except Exception as e2:
-            print(f"[MED] Error click guardar: {e2}")
+            pass
     page.wait_for_timeout(1500)
-    print(f"[MED] Tras guardar: cont_paso3_visible={page.locator('#cont_paso3').is_visible()}, tabla_filas={page.locator('#cont_paso3 table tbody tr').count()}")
 
     # Esperar tabla del paso 3 con valores reales
     page.wait_for_selector("#cont_paso3 table tbody tr", timeout=30000)
