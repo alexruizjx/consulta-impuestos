@@ -922,13 +922,8 @@ def consultar_medellin(page, placa, identificacion, modelo, apellidos_propietari
         except Exception:
             pass
     page.wait_for_timeout(500)
-    # Debug: identificar estado antes del click
-    count = page.locator('button.boton_continuar').count()
-    print(f"[MED-PASO1] botones boton_continuar={count}, cont_paso1_visible={page.locator('#cont_paso1').is_visible()}, cont_paso2_visible={page.locator('#cont_paso2').is_visible()}")
-    if count > 0:
-        page.evaluate("document.querySelector('button.boton_continuar').click()")
-    else:
-        raise Exception("[MED] boton_continuar no encontrado tras seleccionar vigencias")
+    # Usar locator directamente (el botón puede estar en un frame diferente al contexto de page.evaluate)
+    page.locator("button.boton_continuar").click(timeout=10000)
 
     # Paso 2a — modelo y propietario
     page.wait_for_selector("#modelo_veh", timeout=15000)
@@ -981,7 +976,7 @@ def consultar_medellin(page, placa, identificacion, modelo, apellidos_propietari
         pass
 
     # Guardar datos del propietario
-    page.evaluate("document.querySelector('button.boton_continuar').click()")
+    page.locator("button.boton_continuar").click(timeout=10000)
 
     # Esperar tabla del paso 3 con valores reales
     page.wait_for_selector("#cont_paso3 table tbody tr", timeout=30000)
