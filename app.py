@@ -863,9 +863,9 @@ def consultar_antioquia(page, placa, identificacion, tipo_documento_abrev,
 
 
 def consultar_medellin(page, placa, identificacion, modelo, apellidos_propietario,
-                       celular="3208578787", email="consulta@consulta.com",
+                       celular="3208578787", email="consulta@juridicox.com",
                        direccion="CRA 20 20 20"):
-    """Consulta impuesto municipal de Medellín (servicio público)."""
+    """Consulta impuesto municipal de Medellín (servicio público) con valores reales incluyendo intereses."""
     import re as _re
 
     url = "https://www.medellin.gov.co/irj/portal/medellin/pago-impuesto-circulacion-transito"
@@ -883,7 +883,7 @@ def consultar_medellin(page, placa, identificacion, modelo, apellidos_propietari
     except Exception:
         pass
 
-    # Paso 1 — seleccionar servicio público y matrícula Medellín
+    # Paso 0 — popup validación: servicio público + Medellín
     page.locator("input[name='tipoVehiculo'][value='publico']").check()
     page.wait_for_timeout(500)
     page.wait_for_selector("#matriculaLugar", timeout=5000)
@@ -892,13 +892,13 @@ def consultar_medellin(page, placa, identificacion, modelo, apellidos_propietari
     page.wait_for_function("() => !document.getElementById('btnContinuar').disabled", timeout=5000)
     page.locator("#btnContinuar").click()
 
-    # Paso 2 — llenar placa y documento
+    # Paso 1 — llenar placa y documento
     page.wait_for_selector("#placa", timeout=15000)
     page.locator("#placa").fill(placa.upper())
     page.locator("#id").fill(identificacion)
     page.locator("button.boton_consulta").click()
 
-    # Esperar tabla de vigencias en paso 1 (Estado de cuenta)
+    # Esperar tabla de vigencias
     page.wait_for_selector("#cont_paso1 table tbody tr", timeout=30000)
 
     body_text = page.inner_text("body").lower()
@@ -907,29 +907,107 @@ def consultar_medellin(page, placa, identificacion, modelo, apellidos_propietari
     if "no presenta deuda" in body_text or "no adeuda" in body_text or "paz y salvo" in body_text:
         return [], 0
 
-    # Extraer vigencias directamente de la tabla del paso 1
+    # Seleccionar todos los checkboxes de vigencias
+    page.locator(".sel_todo").click()
+    page.wait_for_timeout(500)
+    page.locator("button.boton_continuar").click()
+
+    # Paso 2a — modelo y propietario
+    page.wait_for_selector("#modelo_veh", timeout=15000)
+    page.locator("#modelo_veh").fill(str(modelo))
+
+    # Seleccionar propietario por apellido
+    try:
+        opciones = page.locator("#nombres_props option.valorSel").all()
+        valor_sel = opciones[0].get_attribute("value") if opciones else None
+        for op in opciones:
+            texto = (op.inner_text() or "").upper()
+            if apellidos_propietario and apellidos_propietario.split()[0].upper() in texto:
+                valor_sel = op.get_attribute("value")
+                break
+        if valor_sel:
+            page.locator("#nombres_props").select_option(valor_sel)
+    except Exception:
+        pass
+
+    page.locator("button.boton_validar").click()
+
+    # Paso 2b — datos de contacto del propietario
+    page.wait_for_selector("#correo", timeout=15000)
+    page.locator("#correo").fill(email)
+    page.locator("#celular").fill(celular)
+    try:
+        page.locator("#telefono").fill("6042379933")
+    except Exception:
+        pass
+
+    # Dirección — abrir popup y llenar
+    try:
+        page.locator("#direccion").click()
+        page.wait_for_selector("#tipo_via", timeout=5000)
+        page.locator("#tipo_via").select_option("CARRERA")
+        page.locator("#numero1").fill("20")
+        page.locator("#numero2").fill("20")
+        page.locator("#numero3").fill("20")
+        page.locator("button.boton_dir").click()
+        page.wait_for_timeout(1000)
+    except Exception:
+        pass
+
+    # Departamento y municipio
+    try:
+        page.locator("#departamento").select_option("05")
+        page.wait_for_timeout(500)
+        page.locator("#municipio").select_option("000000005001")
+    except Exception:
+        pass
+
+    # Guardar datos del propietario
+    page.locator("button.boton_continuar").click()
+
+    # Esperar tabla del paso 3 con valores reales
+    page.wait_for_selector("#cont_paso3 table tbody tr", timeout=30000)
+
+    # Extraer total general del tfoot
+    total = 0
+    try:
+        tfoot_text = page.locator("#cont_paso3 table tfoot").inner_text()
+        total_match = _re.search(r'\$([\d\.]+)', tfoot_text)
+        if total_match:
+            total = int(total_match.group(1).replace('.', ''))
+    except Exception:
+        pass
+
+    # Extraer vigencias con valores reales (impuesto + intereses + total por vigencia)
     registros = []
-    filas = page.locator("#cont_paso1 table tbody tr").all()
+    filas = page.locator("#cont_paso3 table tbody tr").all()
     for fila in filas:
         texto = fila.inner_text().strip()
         if not texto:
             continue
         anio = _re.search(r'\b(20\d{2}|19\d{2})\b', texto)
-        # El impuesto viene como $22.932 — extraer solo ese valor
-        valor_match = _re.search(r'\$([\d\.]+)', texto)
-        if anio and valor_match:
+        # Buscar "Total a pagar" que es la última columna
+        valores = _re.findall(r'\$([\d\.]+)', texto)
+        if anio and valores:
             try:
-                valor = int(valor_match.group(1).replace('.', ''))
-                if valor > 0:
+                # El último valor es "Total a pagar" por vigencia
+                total_vigencia = int(valores[-1].replace('.', ''))
+                impuesto = int(valores[-3].replace('.', '')) if len(valores) >= 3 else 0
+                interes = int(valores[-2].replace('.', '')) if len(valores) >= 2 else 0
+                if total_vigencia > 0:
                     registros.append({
                         'vigencia': anio.group(),
                         'estado': 'Pendiente de pago',
-                        'total_vigencia': valor
+                        'impuesto_base': impuesto,
+                        'interes_mora': interes,
+                        'total_vigencia': total_vigencia
                     })
             except ValueError:
                 pass
 
-    total = sum(r['total_vigencia'] for r in registros)
+    if not total and registros:
+        total = sum(r['total_vigencia'] for r in registros)
+
     return registros, total
 
 # ============================================================
