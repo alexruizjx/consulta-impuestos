@@ -925,7 +925,7 @@ def consultar_medellin(page, placa, identificacion, modelo, apellidos_propietari
     # Verificar que hay checkboxes marcados antes de continuar
     marcados = page.locator("#cont_paso1 input[type='checkbox']:checked").count()
     print(f"[MED] Checkboxes marcados: {marcados}")
-    btn = page.locator("button.boton_continuar")
+    btn = page.locator("button.boton_continuar").first
     disabled = btn.get_attribute("disabled")
     print(f"[MED] boton_continuar disabled={disabled}")
     # Forzar click aunque esté deshabilitado
@@ -1003,7 +1003,11 @@ def consultar_medellin(page, placa, identificacion, modelo, apellidos_propietari
 
     # Guardar datos del propietario — bypass validación HTML5
     print(f"[MED] Antes guardar: dir='{page.locator('#direccion').input_value()}', depto='{page.locator('#departamento').input_value()}', mun='{page.locator('#municipio').input_value()}'")
-    page.locator("button.boton_continuar").evaluate("el => el.click()")
+    # Contar botones boton_continuar disponibles
+    count_btn = page.locator("button.boton_continuar").count()
+    print(f"[MED] botones boton_continuar disponibles: {count_btn}")
+    # Tomar el primero visible
+    page.locator("button.boton_continuar").first.evaluate("el => el.click()")
     page.wait_for_timeout(1500)
     print(f"[MED] Tras guardar: cont_paso3_visible={page.locator('#cont_paso3').is_visible()}, tabla_filas={page.locator('#cont_paso3 table tbody tr').count()}")
 
