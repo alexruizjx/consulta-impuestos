@@ -2025,19 +2025,20 @@ def sibga_avaluo():
 
         # Extraer tabla completa de avalúos por modelo
         avaluos_por_modelo = {}
-        bloque_m = re.search(r'id="tabla_avaluos_principal".*?</table>', html, re.DOTALL)
-        if bloque_m:
-            filas = re.findall(r'<tr>(.*?)</tr>', bloque_m.group(0), re.DOTALL)
-            if len(filas) >= 2:
-                headers = re.findall(r'<(?:th|td)[^>]*>([^<]+)</(?:th|td)>', filas[0])
-                valores = re.findall(r'<(?:th|td)[^>]*>([^<]+)</(?:th|td)>', filas[1])
-                for h, v in zip(headers, valores):
-                    h = h.strip()
-                    if h.isdigit():
-                        nums = re.findall(r'[0-9]+', v.replace('.','').replace(',',''))
-                        if nums: avaluos_por_modelo[int(h)] = int(nums[0])
+        print(f"[SIBGA] html len={len(html)}, status={r.status_code}")
+        # Buscar todos los años en la fila de Modelo
+        modelos_match = re.findall(r'<td>\s*((?:19|20)\d{2})\s*</td>', html)
+        # Buscar todos los valores en la fila de Valor Comercial
+        valores_match = re.findall(r'<td>\s*\$\s*([\d\.]+)\s*</td>', html)
+        print(f"[SIBGA] modelos={modelos_match[:5]} valores={valores_match[:5]}")
+        for anio_str, val_str in zip(modelos_match, valores_match):
+            try:
+                avaluos_por_modelo[int(anio_str)] = int(val_str.replace('.','').replace(',',''))
+            except Exception:
+                pass
 
         if not avaluos_por_modelo:
+            print(f"[SIBGA] HTML snippet: {html[2000:3000]}")
             return jsonify({"error": "No se encontraron avalúos en SIBGA"}), 404
 
         # Construir fila para insertar/actualizar
