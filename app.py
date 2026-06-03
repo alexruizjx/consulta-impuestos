@@ -1931,8 +1931,8 @@ def sibga_marcas():
             return jsonify({"marcas": [r[0] for r in rows]})
         # BD vacía — traer del SIBGA
         s = requests.Session(); s.headers.update(SIBGA_HEADERS)
-        r = s.post(f"{SIBGA_BASE}/ObtenerPropiedadesTipoVehiculo",
-                   data={"tive": SIBGA_TIVE, "periodo": SIBGA_PERIODO}, timeout=15)
+        r = s.post(f"{SIBGA_BASE}/ObtenerMarcasTipoVehiculo",
+                   data={"tive": SIBGA_TIVE, "clase": 7, "periodo": SIBGA_PERIODO}, timeout=15)
         data = r.json()
         marcas = data if isinstance(data, list) else data.get("marcas", [])
         return jsonify({"marcas": [{"id": m["id"], "nombre": m["nombre"]} for m in marcas]})
