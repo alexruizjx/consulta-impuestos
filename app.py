@@ -2107,5 +2107,75 @@ def sibga_avaluo():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/sibga/guardar-lote", methods=["POST"])
+def sibga_guardar_lote():
+    """Recibe avalúos desde el script de consola del navegador y los guarda en BD."""
+    try:
+        data  = request.get_json()
+        lote  = data.get("lote", [])
+        if not lote:
+            return jsonify({"ok": False, "error": "lote vacio"}), 400
+        conn = get_db_conn(); cur = conn.cursor()
+        guardados = 0
+        for item in lote:
+            linea_id     = item.get("linea_id")
+            marca        = item.get("marca", "").upper()
+            linea_nombre = item.get("linea", "").upper()
+            cilindraje   = item.get("cilindraje", 0)
+            avaluos      = item.get("avaluos", {})
+            if not linea_id or not avaluos:
+                continue
+            cols_vals = {}
+            for anio_str, val in avaluos.items():
+                try:
+                    anio = int(anio_str)
+                    val  = int(str(val).replace(".","").replace(",",""))
+                    if anio <= 2001:   cols_vals["anio_2001_ant"] = val
+                    elif anio <= 2024: cols_vals[f"anio_{anio}"]  = val
+                except Exception:
+                    continue
+            if not cols_vals:
+                continue
+            cur.execute("SELECT id FROM retefuente_bajocilindraje WHERE linea_id=%s", (linea_id,))
+            exists = cur.fetchone()
+            if exists:
+                set_clause = ", ".join([f"{k}=%s" for k in cols_vals])
+                cur.execute(f"UPDATE retefuente_bajocilindraje SET {set_clause}, linea=%s, cilindraje=%s WHERE linea_id=%s",
+                            list(cols_vals.values()) + [linea_nombre, cilindraje, linea_id])
+            else:
+                col_names    = ", ".join(cols_vals.keys())
+                placeholders = ", ".join(["%s"] * len(cols_vals))
+                cur.execute(f"""
+                    INSERT INTO retefuente_bajocilindraje (linea_id, marca, linea, cilindraje, {col_names})
+                    VALUES (%s, %s, %s, %s, {placeholders})
+                """, [linea_id, marca, linea_nombre, cilindraje] + list(cols_vals.values()))
+            guardados += 1
+        conn.commit(); cur.close(); conn.close()
+        return jsonify({"ok": True, "guardados": guardados})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/sibga/pendientes", methods=["GET"])
+def sibga_pendientes():
+    """Devuelve líneas de motos pendientes de consultar en SIBGA."""
+    try:
+        inicio = request.args.get("inicio", 0, type=int)
+        limite = request.args.get("limite", 2000, type=int)
+        conn = get_db_conn(); cur = conn.cursor()
+        cur.execute("""
+            SELECT linea_id, marca, linea FROM retefuente_bajocilindraje
+            WHERE anio_2024 = 0 AND anio_2023 = 0 AND anio_2022 = 0
+            ORDER BY marca, linea
+            LIMIT %s OFFSET %s
+        """, (limite, inicio))
+        rows = cur.fetchall()
+        cur.close(); conn.close()
+        return jsonify({"lineas": [{"linea_id": r[0], "marca": r[1], "linea": r[2]} for r in rows],
+                        "total": len(rows)})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
