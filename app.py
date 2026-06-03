@@ -2005,8 +2005,20 @@ def sibga_avaluo():
             })
 
 
-        # Consultar SIBGA — extrae tabla completa de modelos
+        # Consultar SIBGA — establecer sesión primero navegando el formulario
         s = requests.Session(); s.headers.update(SIBGA_HEADERS)
+        # 1. Cargar la página principal para obtener cookies
+        s.get("https://web.mintransporte.gov.co/Sibga/Home/Index", timeout=15)
+        # 2. Simular selección de tipo vehículo (motocicletas)
+        s.post(f"{SIBGA_BASE}/ObtenerClasesTipoVehiculo",
+               data={"tive": SIBGA_TIVE, "periodo": SIBGA_PERIODO}, timeout=10)
+        # 3. Simular selección de clase y marca
+        if marca_id:
+            s.post(f"{SIBGA_BASE}/ObtenerMarcasTipoVehiculo",
+                   data={"tive": SIBGA_TIVE, "clase": 7, "periodo": SIBGA_PERIODO}, timeout=10)
+            s.post(f"{SIBGA_BASE}/ObtenerLineasMarca",
+                   data={"tive": SIBGA_TIVE, "clase": 7, "marca": marca_id, "periodo": SIBGA_PERIODO}, timeout=10)
+        # 4. Ahora hacer el GET al avalúo con la sesión establecida
         url = f"{SIBGA_BASE}/Proyeccion3/{linea_id}?mode={modelo}&periodo={SIBGA_PERIODO}"
         r = s.get(url, timeout=20)
         html = r.text
