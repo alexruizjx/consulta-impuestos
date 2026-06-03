@@ -2045,7 +2045,7 @@ def sibga_avaluo():
                     "status_code": r.status_code,
                     "modelos_encontrados": modelos_match[:5],
                     "valores_encontrados": valores_match[:5],
-                    "html_snippet": html[1500:2500],
+                    "html_snippet": html[:500],
                 }
             }), 404
 
