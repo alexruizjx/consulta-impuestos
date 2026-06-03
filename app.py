@@ -2038,8 +2038,16 @@ def sibga_avaluo():
                 pass
 
         if not avaluos_por_modelo:
-            print(f"[SIBGA] HTML snippet: {html[2000:3000]}")
-            return jsonify({"error": "No se encontraron avalúos en SIBGA"}), 404
+            return jsonify({
+                "error": "No se encontraron avalúos en SIBGA",
+                "debug": {
+                    "html_len": len(html),
+                    "status_code": r.status_code,
+                    "modelos_encontrados": modelos_match[:5],
+                    "valores_encontrados": valores_match[:5],
+                    "html_snippet": html[1500:2500],
+                }
+            }), 404
 
         # Construir fila para insertar/actualizar
         cols_vals = {}
