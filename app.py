@@ -2004,38 +2004,37 @@ def sibga_avaluo():
                 "fuente":     "cache"
             })
 
+
         # Consultar SIBGA — extrae tabla completa de modelos
-        from bs4 import BeautifulSoup as _bs
         s = requests.Session(); s.headers.update(SIBGA_HEADERS)
         url = f"{SIBGA_BASE}/Proyeccion3/{linea_id}?mode={modelo}&periodo={SIBGA_PERIODO}"
         r = s.get(url, timeout=20)
-        soup = _bs(r.text, "html.parser")
+        html = r.text
 
-        # Extraer datos del resumen
-        linea_sibga   = linea_nombre
+        # Extraer línea del resumen con re
+        linea_sibga = linea_nombre
+        m_linea = re.search(r'<th>[^<]*[Ll]inea[^<]*</th>\s*<td>([^<]+)</td>', html)
+        if m_linea: linea_sibga = m_linea.group(1).strip()
+
+        # Extraer cilindraje del resumen
         cilindraje_val = 0
-        for tr in soup.select("table.projection-summary-table tr"):
-            th = tr.find("th"); td = tr.find("td")
-            if not th or not td: continue
-            key = th.get_text(strip=True).lower()
-            val = td.get_text(strip=True)
-            if "linea" in key:      linea_sibga = val.strip()
-            if "cilindraje" in key:
-                nums = re.findall(r"[0-9]+", val)
-                if nums: cilindraje_val = int(nums[0])
+        m_cil = re.search(r'<th>[^<]*[Cc]ilindraje[^<]*</th>\s*<td>([^<]+)</td>', html)
+        if m_cil:
+            nums = re.findall(r'[0-9]+', m_cil.group(1))
+            if nums: cilindraje_val = int(nums[0])
 
         # Extraer tabla completa de avalúos por modelo
         avaluos_por_modelo = {}
-        tablas = soup.select("div#tabla_avaluos_principal table.tabla_generica")
-        if tablas:
-            tabla = tablas[0]
-            filas = tabla.find_all("tr")
+        bloque_m = re.search(r'id="tabla_avaluos_principal".*?</table>', html, re.DOTALL)
+        if bloque_m:
+            filas = re.findall(r'<tr>(.*?)</tr>', bloque_m.group(0), re.DOTALL)
             if len(filas) >= 2:
-                headers = [th.get_text(strip=True) for th in filas[0].find_all(["th","td"])]
-                valores = [td.get_text(strip=True) for td in filas[1].find_all(["th","td"])]
+                headers = re.findall(r'<(?:th|td)[^>]*>([^<]+)</(?:th|td)>', filas[0])
+                valores = re.findall(r'<(?:th|td)[^>]*>([^<]+)</(?:th|td)>', filas[1])
                 for h, v in zip(headers, valores):
+                    h = h.strip()
                     if h.isdigit():
-                        nums = re.findall(r"[0-9]+", v.replace(".", "").replace(",", ""))
+                        nums = re.findall(r'[0-9]+', v.replace('.','').replace(',',''))
                         if nums: avaluos_por_modelo[int(h)] = int(nums[0])
 
         if not avaluos_por_modelo:
