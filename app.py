@@ -1894,170 +1894,195 @@ def ocr_guardar_municipio():
 
 
 # ============================================================
-# SIBGA — Avalúos motos (período 2024)
+# SIBGA — Avalúos motos bajo cilindraje (≤125cc)
 # ============================================================
 
 SIBGA_BASE    = "https://web.mintransporte.gov.co/Sibga/Home"
 SIBGA_TIVE    = 6
 SIBGA_PERIODO = 2024
+SIBGA_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "application/json, text/javascript, */*; q=0.01",
+    "Accept-Language": "es-CO,es;q=0.9",
+    "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+    "Origin": "https://web.mintransporte.gov.co",
+    "Referer": "https://web.mintransporte.gov.co/Sibga/Home/Index",
+    "X-Requested-With": "XMLHttpRequest",
+}
 
-def sibga_crear_tabla():
+def _sibga_col_anio(modelo):
     try:
-        conn = get_db_conn(); cur = conn.cursor()
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS cache_sibga_motos (
-                id           SERIAL PRIMARY KEY,
-                linea_id     INTEGER NOT NULL,
-                linea_nombre TEXT NOT NULL,
-                marca        TEXT NOT NULL,
-                clase        TEXT NOT NULL DEFAULT '',
-                modelo       INTEGER NOT NULL,
-                periodo      INTEGER NOT NULL DEFAULT 2024,
-                avaluo       BIGINT NOT NULL,
-                creado_en    TIMESTAMP DEFAULT NOW(),
-                UNIQUE(linea_id, modelo, periodo)
-            )
-        """)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS cache_sibga_marcas (
-                id       SERIAL PRIMARY KEY,
-                marca_id INTEGER NOT NULL,
-                nombre   TEXT NOT NULL,
-                tive     INTEGER NOT NULL DEFAULT 6,
-                UNIQUE(marca_id, tive)
-            )
-        """)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS cache_sibga_lineas (
-                id       SERIAL PRIMARY KEY,
-                linea_id INTEGER NOT NULL,
-                nombre   TEXT NOT NULL,
-                marca_id INTEGER NOT NULL DEFAULT 0,
-                tive     INTEGER NOT NULL DEFAULT 6,
-                UNIQUE(linea_id, tive)
-            )
-        """)
-        conn.commit(); cur.close(); conn.close()
-    except Exception as e:
-        print(f"[SIBGA] Error creando tablas: {e}")
+        anio = int(str(modelo).strip())
+    except:
+        return "anio_2001_ant"
+    if anio <= 2001: return "anio_2001_ant"
+    if anio > 2024:  return "anio_2024"
+    return f"anio_{anio}"
 
 
 @app.route("/sibga/marcas", methods=["GET"])
 def sibga_marcas():
+    """Marcas desde BD o SIBGA en tiempo real."""
     try:
-        sibga_crear_tabla()
         conn = get_db_conn(); cur = conn.cursor()
-        cur.execute("SELECT marca_id, nombre FROM cache_sibga_marcas WHERE tive=%s ORDER BY nombre", (SIBGA_TIVE,))
+        cur.execute("SELECT DISTINCT marca FROM retefuente_bajocilindraje ORDER BY marca")
         rows = cur.fetchall(); cur.close(); conn.close()
         if rows:
-            return jsonify({"marcas": [{"id": r[0], "nombre": r[1]} for r in rows]})
-        # Consultar SIBGA
-        s = requests.Session()
-        s.headers.update({"User-Agent": "Mozilla/5.0", "Referer": "https://web.mintransporte.gov.co/Sibga/Home/Index"})
+            return jsonify({"marcas": [r[0] for r in rows]})
+        # BD vacía — traer del SIBGA
+        s = requests.Session(); s.headers.update(SIBGA_HEADERS)
         r = s.post(f"{SIBGA_BASE}/ObtenerPropiedadesTipoVehiculo",
                    data={"tive": SIBGA_TIVE, "periodo": SIBGA_PERIODO}, timeout=15)
         data = r.json()
-        marcas = data.get("marcas", data) if isinstance(data, dict) else data
-        conn = get_db_conn(); cur = conn.cursor()
-        for m in marcas:
-            cur.execute("INSERT INTO cache_sibga_marcas (marca_id, nombre, tive) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING",
-                        (m["id"], m["nombre"], SIBGA_TIVE))
-        conn.commit(); cur.close(); conn.close()
-        return jsonify({"marcas": marcas})
+        marcas = data if isinstance(data, list) else data.get("marcas", [])
+        return jsonify({"marcas": [{"id": m["id"], "nombre": m["nombre"]} for m in marcas]})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
 @app.route("/sibga/lineas", methods=["GET"])
 def sibga_lineas():
-    marca_id = request.args.get("marca_id", type=int)
-    clase_id = request.args.get("clase_id", type=int, default=7)
-    if not marca_id:
-        return jsonify({"error": "marca_id requerido"}), 400
+    """Líneas de una marca desde BD o SIBGA."""
+    marca_id   = request.args.get("marca_id", type=int)
+    marca_nombre = request.args.get("marca_nombre", "").upper().strip()
+    clase_id   = request.args.get("clase_id", type=int, default=7)
+    if not marca_id and not marca_nombre:
+        return jsonify({"error": "marca_id o marca_nombre requerido"}), 400
     try:
         conn = get_db_conn(); cur = conn.cursor()
-        cur.execute("SELECT linea_id, nombre FROM cache_sibga_lineas WHERE marca_id=%s AND tive=%s ORDER BY nombre",
-                    (marca_id, SIBGA_TIVE))
+        if marca_nombre:
+            cur.execute("SELECT DISTINCT linea_id, linea FROM retefuente_bajocilindraje WHERE marca=%s ORDER BY linea",
+                        (marca_nombre,))
+        else:
+            cur.execute("SELECT DISTINCT linea_id, linea FROM retefuente_bajocilindraje WHERE linea_id IN (SELECT linea_id FROM retefuente_bajocilindraje LIMIT 1)")
         rows = cur.fetchall(); cur.close(); conn.close()
         if rows:
             return jsonify({"lineas": [{"id": r[0], "nombre": r[1]} for r in rows]})
-        s = requests.Session()
-        s.headers.update({"User-Agent": "Mozilla/5.0", "Referer": "https://web.mintransporte.gov.co/Sibga/Home/Index"})
+        # No en BD — consultar SIBGA
+        if not marca_id:
+            return jsonify({"lineas": []})
+        s = requests.Session(); s.headers.update(SIBGA_HEADERS)
         r = s.post(f"{SIBGA_BASE}/ObtenerLineasMarca",
-                   data={"tive": SIBGA_TIVE, "clase": clase_id, "marca": marca_id, "periodo": SIBGA_PERIODO}, timeout=15)
+                   data={"tive": SIBGA_TIVE, "clase": clase_id,
+                         "marca": marca_id, "periodo": SIBGA_PERIODO}, timeout=15)
         lineas = r.json()
-        conn = get_db_conn(); cur = conn.cursor()
-        for l in lineas:
-            cur.execute("INSERT INTO cache_sibga_lineas (linea_id, nombre, marca_id, tive) VALUES (%s,%s,%s,%s) ON CONFLICT DO NOTHING",
-                        (l["id"], l["nombre"], marca_id, SIBGA_TIVE))
-        conn.commit(); cur.close(); conn.close()
-        return jsonify({"lineas": lineas})
+        if not isinstance(lineas, list): lineas = []
+        return jsonify({"lineas": [{"id": l["id"], "nombre": l["nombre"]} for l in lineas]})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
 @app.route("/sibga/avaluo", methods=["GET"])
 def sibga_avaluo():
-    linea_id = request.args.get("linea_id", type=int)
-    modelo   = request.args.get("modelo", type=int)
-    marca    = request.args.get("marca", "").upper().strip()
-    clase    = request.args.get("clase", "MOTOCICLETA").upper().strip()
+    """
+    Consulta avalúo de moto ≤125cc.
+    1. Busca en retefuente_bajocilindraje
+    2. Si no existe, consulta SIBGA, extrae TODA la tabla de modelos y guarda en BD
+    """
+    linea_id     = request.args.get("linea_id", type=int)
+    modelo       = request.args.get("modelo", type=int)
+    marca_id     = request.args.get("marca_id", type=int, default=0)
+    marca_nombre = request.args.get("marca", "").upper().strip()
+    linea_nombre = request.args.get("linea", "").upper().strip()
     if not linea_id or not modelo:
         return jsonify({"error": "linea_id y modelo requeridos"}), 400
+
+    col_anio = _sibga_col_anio(modelo)
+
     try:
-        sibga_crear_tabla()
         conn = get_db_conn(); cur = conn.cursor()
-        cur.execute("SELECT avaluo, linea_nombre FROM cache_sibga_motos WHERE linea_id=%s AND modelo=%s AND periodo=%s",
-                    (linea_id, modelo, SIBGA_PERIODO))
+        cur.execute(f"SELECT {col_anio}, linea, cilindraje FROM retefuente_bajocilindraje WHERE linea_id=%s",
+                    (linea_id,))
         row = cur.fetchone(); cur.close(); conn.close()
-        if row:
-            return jsonify({"avaluo": row[0], "linea": row[1], "modelo": modelo,
-                            "periodo": SIBGA_PERIODO, "fuente": "cache"})
-        # Consultar SIBGA
+        if row and row[0] and row[0] > 0:
+            return jsonify({
+                "avaluo":     row[0],
+                "linea":      row[1],
+                "cilindraje": row[2],
+                "modelo":     modelo,
+                "periodo":    SIBGA_PERIODO,
+                "fuente":     "cache"
+            })
+
+        # Consultar SIBGA — extrae tabla completa de modelos
         from bs4 import BeautifulSoup as _bs
-        s = requests.Session()
-        s.headers.update({"User-Agent": "Mozilla/5.0", "Referer": "https://web.mintransporte.gov.co/Sibga/Home/Index"})
+        s = requests.Session(); s.headers.update(SIBGA_HEADERS)
         url = f"{SIBGA_BASE}/Proyeccion3/{linea_id}?mode={modelo}&periodo={SIBGA_PERIODO}"
         r = s.get(url, timeout=20)
         soup = _bs(r.text, "html.parser")
-        linea_nombre = ""
-        avaluo_val   = 0
+
+        # Extraer datos del resumen
+        linea_sibga   = linea_nombre
+        cilindraje_val = 0
         for tr in soup.select("table.projection-summary-table tr"):
             th = tr.find("th"); td = tr.find("td")
             if not th or not td: continue
             key = th.get_text(strip=True).lower()
             val = td.get_text(strip=True)
-            if "linea" in key:
-                linea_nombre = val.strip()
-            if "valor comercial" in key:
-                nums = re.findall(r"[\d]+", val.replace(".", "").replace(",", ""))
-                if nums: avaluo_val = int(nums[0])
-        if not avaluo_val:
-            return jsonify({"error": "No se encontró avalúo para ese modelo"}), 404
+            if "linea" in key:      linea_sibga = val.strip()
+            if "cilindraje" in key:
+                nums = re.findall(r"[0-9]+", val)
+                if nums: cilindraje_val = int(nums[0])
+
+        # Extraer tabla completa de avalúos por modelo
+        avaluos_por_modelo = {}
+        tablas = soup.select("div#tabla_avaluos_principal table.tabla_generica")
+        if tablas:
+            tabla = tablas[0]
+            filas = tabla.find_all("tr")
+            if len(filas) >= 2:
+                headers = [th.get_text(strip=True) for th in filas[0].find_all(["th","td"])]
+                valores = [td.get_text(strip=True) for td in filas[1].find_all(["th","td"])]
+                for h, v in zip(headers, valores):
+                    if h.isdigit():
+                        nums = re.findall(r"[0-9]+", v.replace(".", "").replace(",", ""))
+                        if nums: avaluos_por_modelo[int(h)] = int(nums[0])
+
+        if not avaluos_por_modelo:
+            return jsonify({"error": "No se encontraron avalúos en SIBGA"}), 404
+
+        # Construir fila para insertar/actualizar
+        cols_vals = {}
+        for anio, val in avaluos_por_modelo.items():
+            if anio <= 2001:
+                cols_vals["anio_2001_ant"] = val
+            elif 2002 <= anio <= 2024:
+                cols_vals[f"anio_{anio}"] = val
+
+        if not cols_vals:
+            return jsonify({"error": "No se encontraron modelos válidos"}), 404
+
+        # Upsert en BD
         conn = get_db_conn(); cur = conn.cursor()
-        cur.execute("""
-            INSERT INTO cache_sibga_motos (linea_id, linea_nombre, marca, clase, modelo, periodo, avaluo)
-            VALUES (%s,%s,%s,%s,%s,%s,%s)
-            ON CONFLICT (linea_id, modelo, periodo) DO UPDATE SET avaluo=EXCLUDED.avaluo
-        """, (linea_id, linea_nombre, marca, clase, modelo, SIBGA_PERIODO, avaluo_val))
-        # Cachear líneas relacionadas
-        for tr in soup.select("div.projection-link-card table.tabla_generica tr"):
-            cells = tr.find_all("td")
-            if len(cells) >= 2:
-                nombre_rel = cells[0].get_text(strip=True)
-                link = cells[1].find("a")
-                if link and nombre_rel:
-                    href = link.get("href", "")
-                    id_match = re.search(r"[?&]id=([0-9]+)", href)
-                    if id_match:
-                        try:
-                            cur.execute("INSERT INTO cache_sibga_lineas (linea_id, nombre, marca_id, tive) VALUES (%s,%s,0,%s) ON CONFLICT DO NOTHING",
-                                        (int(id_match.group(1)), nombre_rel, SIBGA_TIVE))
-                        except Exception:
-                            pass
+        set_clause = ", ".join([f"{k}=%s" for k in cols_vals])
+        vals = list(cols_vals.values())
+        cur.execute(f"SELECT id FROM retefuente_bajocilindraje WHERE linea_id=%s", (linea_id,))
+        exists = cur.fetchone()
+        if exists:
+            cur.execute(f"UPDATE retefuente_bajocilindraje SET {set_clause}, linea=%s, cilindraje=%s WHERE linea_id=%s",
+                        vals + [linea_sibga, cilindraje_val, linea_id])
+        else:
+            col_names = ", ".join(cols_vals.keys())
+            placeholders = ", ".join(["%s"] * len(cols_vals))
+            cur.execute(f"""
+                INSERT INTO retefuente_bajocilindraje
+                    (linea_id, marca, linea, cilindraje, {col_names})
+                VALUES (%s, %s, %s, %s, {placeholders})
+            """, [linea_id, marca_nombre, linea_sibga, cilindraje_val] + vals)
         conn.commit(); cur.close(); conn.close()
-        return jsonify({"avaluo": avaluo_val, "linea": linea_nombre,
-                        "modelo": modelo, "periodo": SIBGA_PERIODO, "fuente": "sibga"})
+
+        avaluo_modelo = avaluos_por_modelo.get(modelo, 0)
+        if not avaluo_modelo and modelo <= 2001:
+            avaluo_modelo = cols_vals.get("anio_2001_ant", 0)
+
+        return jsonify({
+            "avaluo":     avaluo_modelo,
+            "linea":      linea_sibga,
+            "cilindraje": cilindraje_val,
+            "modelo":     modelo,
+            "periodo":    SIBGA_PERIODO,
+            "fuente":     "sibga"
+        })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
