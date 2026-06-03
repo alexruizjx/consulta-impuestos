@@ -1893,5 +1893,174 @@ def ocr_guardar_municipio():
         return jsonify({"error": str(e)}), 500
 
 
+# ============================================================
+# SIBGA — Avalúos motos (período 2024)
+# ============================================================
+
+SIBGA_BASE    = "https://web.mintransporte.gov.co/Sibga/Home"
+SIBGA_TIVE    = 6
+SIBGA_PERIODO = 2024
+
+def sibga_crear_tabla():
+    try:
+        conn = get_db_conn(); cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS cache_sibga_motos (
+                id           SERIAL PRIMARY KEY,
+                linea_id     INTEGER NOT NULL,
+                linea_nombre TEXT NOT NULL,
+                marca        TEXT NOT NULL,
+                clase        TEXT NOT NULL DEFAULT '',
+                modelo       INTEGER NOT NULL,
+                periodo      INTEGER NOT NULL DEFAULT 2024,
+                avaluo       BIGINT NOT NULL,
+                creado_en    TIMESTAMP DEFAULT NOW(),
+                UNIQUE(linea_id, modelo, periodo)
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS cache_sibga_marcas (
+                id       SERIAL PRIMARY KEY,
+                marca_id INTEGER NOT NULL,
+                nombre   TEXT NOT NULL,
+                tive     INTEGER NOT NULL DEFAULT 6,
+                UNIQUE(marca_id, tive)
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS cache_sibga_lineas (
+                id       SERIAL PRIMARY KEY,
+                linea_id INTEGER NOT NULL,
+                nombre   TEXT NOT NULL,
+                marca_id INTEGER NOT NULL DEFAULT 0,
+                tive     INTEGER NOT NULL DEFAULT 6,
+                UNIQUE(linea_id, tive)
+            )
+        """)
+        conn.commit(); cur.close(); conn.close()
+    except Exception as e:
+        print(f"[SIBGA] Error creando tablas: {e}")
+
+
+@app.route("/sibga/marcas", methods=["GET"])
+def sibga_marcas():
+    try:
+        sibga_crear_tabla()
+        conn = get_db_conn(); cur = conn.cursor()
+        cur.execute("SELECT marca_id, nombre FROM cache_sibga_marcas WHERE tive=%s ORDER BY nombre", (SIBGA_TIVE,))
+        rows = cur.fetchall(); cur.close(); conn.close()
+        if rows:
+            return jsonify({"marcas": [{"id": r[0], "nombre": r[1]} for r in rows]})
+        # Consultar SIBGA
+        s = requests.Session()
+        s.headers.update({"User-Agent": "Mozilla/5.0", "Referer": "https://web.mintransporte.gov.co/Sibga/Home/Index"})
+        r = s.post(f"{SIBGA_BASE}/ObtenerPropiedadesTipoVehiculo",
+                   data={"tive": SIBGA_TIVE, "periodo": SIBGA_PERIODO}, timeout=15)
+        data = r.json()
+        marcas = data.get("marcas", data) if isinstance(data, dict) else data
+        conn = get_db_conn(); cur = conn.cursor()
+        for m in marcas:
+            cur.execute("INSERT INTO cache_sibga_marcas (marca_id, nombre, tive) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING",
+                        (m["id"], m["nombre"], SIBGA_TIVE))
+        conn.commit(); cur.close(); conn.close()
+        return jsonify({"marcas": marcas})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/sibga/lineas", methods=["GET"])
+def sibga_lineas():
+    marca_id = request.args.get("marca_id", type=int)
+    clase_id = request.args.get("clase_id", type=int, default=7)
+    if not marca_id:
+        return jsonify({"error": "marca_id requerido"}), 400
+    try:
+        conn = get_db_conn(); cur = conn.cursor()
+        cur.execute("SELECT linea_id, nombre FROM cache_sibga_lineas WHERE marca_id=%s AND tive=%s ORDER BY nombre",
+                    (marca_id, SIBGA_TIVE))
+        rows = cur.fetchall(); cur.close(); conn.close()
+        if rows:
+            return jsonify({"lineas": [{"id": r[0], "nombre": r[1]} for r in rows]})
+        s = requests.Session()
+        s.headers.update({"User-Agent": "Mozilla/5.0", "Referer": "https://web.mintransporte.gov.co/Sibga/Home/Index"})
+        r = s.post(f"{SIBGA_BASE}/ObtenerLineasMarca",
+                   data={"tive": SIBGA_TIVE, "clase": clase_id, "marca": marca_id, "periodo": SIBGA_PERIODO}, timeout=15)
+        lineas = r.json()
+        conn = get_db_conn(); cur = conn.cursor()
+        for l in lineas:
+            cur.execute("INSERT INTO cache_sibga_lineas (linea_id, nombre, marca_id, tive) VALUES (%s,%s,%s,%s) ON CONFLICT DO NOTHING",
+                        (l["id"], l["nombre"], marca_id, SIBGA_TIVE))
+        conn.commit(); cur.close(); conn.close()
+        return jsonify({"lineas": lineas})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/sibga/avaluo", methods=["GET"])
+def sibga_avaluo():
+    linea_id = request.args.get("linea_id", type=int)
+    modelo   = request.args.get("modelo", type=int)
+    marca    = request.args.get("marca", "").upper().strip()
+    clase    = request.args.get("clase", "MOTOCICLETA").upper().strip()
+    if not linea_id or not modelo:
+        return jsonify({"error": "linea_id y modelo requeridos"}), 400
+    try:
+        sibga_crear_tabla()
+        conn = get_db_conn(); cur = conn.cursor()
+        cur.execute("SELECT avaluo, linea_nombre FROM cache_sibga_motos WHERE linea_id=%s AND modelo=%s AND periodo=%s",
+                    (linea_id, modelo, SIBGA_PERIODO))
+        row = cur.fetchone(); cur.close(); conn.close()
+        if row:
+            return jsonify({"avaluo": row[0], "linea": row[1], "modelo": modelo,
+                            "periodo": SIBGA_PERIODO, "fuente": "cache"})
+        # Consultar SIBGA
+        from bs4 import BeautifulSoup as _bs
+        s = requests.Session()
+        s.headers.update({"User-Agent": "Mozilla/5.0", "Referer": "https://web.mintransporte.gov.co/Sibga/Home/Index"})
+        url = f"{SIBGA_BASE}/Proyeccion3/{linea_id}?mode={modelo}&periodo={SIBGA_PERIODO}"
+        r = s.get(url, timeout=20)
+        soup = _bs(r.text, "html.parser")
+        linea_nombre = ""
+        avaluo_val   = 0
+        for tr in soup.select("table.projection-summary-table tr"):
+            th = tr.find("th"); td = tr.find("td")
+            if not th or not td: continue
+            key = th.get_text(strip=True).lower()
+            val = td.get_text(strip=True)
+            if "linea" in key:
+                linea_nombre = val.strip()
+            if "valor comercial" in key:
+                nums = re.findall(r"[\d]+", val.replace(".", "").replace(",", ""))
+                if nums: avaluo_val = int(nums[0])
+        if not avaluo_val:
+            return jsonify({"error": "No se encontró avalúo para ese modelo"}), 404
+        conn = get_db_conn(); cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO cache_sibga_motos (linea_id, linea_nombre, marca, clase, modelo, periodo, avaluo)
+            VALUES (%s,%s,%s,%s,%s,%s,%s)
+            ON CONFLICT (linea_id, modelo, periodo) DO UPDATE SET avaluo=EXCLUDED.avaluo
+        """, (linea_id, linea_nombre, marca, clase, modelo, SIBGA_PERIODO, avaluo_val))
+        # Cachear líneas relacionadas
+        for tr in soup.select("div.projection-link-card table.tabla_generica tr"):
+            cells = tr.find_all("td")
+            if len(cells) >= 2:
+                nombre_rel = cells[0].get_text(strip=True)
+                link = cells[1].find("a")
+                if link and nombre_rel:
+                    href = link.get("href", "")
+                    id_match = re.search(r"[?&]id=([0-9]+)", href)
+                    if id_match:
+                        try:
+                            cur.execute("INSERT INTO cache_sibga_lineas (linea_id, nombre, marca_id, tive) VALUES (%s,%s,0,%s) ON CONFLICT DO NOTHING",
+                                        (int(id_match.group(1)), nombre_rel, SIBGA_TIVE))
+                        except Exception:
+                            pass
+        conn.commit(); cur.close(); conn.close()
+        return jsonify({"avaluo": avaluo_val, "linea": linea_nombre,
+                        "modelo": modelo, "periodo": SIBGA_PERIODO, "fuente": "sibga"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
