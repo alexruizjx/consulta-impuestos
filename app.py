@@ -993,9 +993,6 @@ def consultar_medellin(page, placa, identificacion, modelo, apellidos_propietari
         pass
 
     # Guardar datos del propietario — bypass validación HTML5
-    # Listar todos los botones disponibles para debug
-    botones = page.locator("button").all()
-    info_btns = [(b.get_attribute("class") or "", b.get_attribute("form") or "", b.inner_text()[:30] if b.is_visible() else "[hidden]") for b in botones]
     # Intentar el botón de guardar del form info_propietario
     try:
         page.locator("button[form='info_propietario']").first.evaluate("el => el.click()")
@@ -1975,9 +1972,10 @@ def sibga_lineas():
 @app.route("/sibga/avaluo", methods=["GET"])
 def sibga_avaluo():
     """
-    Consulta avalúo de moto ≤125cc.
-    1. Busca en retefuente_bajocilindraje
-    2. Si no existe, consulta SIBGA, extrae TODA la tabla de modelos y guarda en BD
+    Consulta avalúo de moto bajo cilindraje.
+    1. Busca en retefuente_bajocilindraje (caché)
+    2. Si no existe, usa Playwright + 2captcha para consultar el SIBGA
+    3. Guarda todos los modelos de esa línea + líneas relacionadas en BD
     """
     linea_id     = request.args.get("linea_id", type=int)
     modelo       = request.args.get("modelo", type=int)
@@ -1990,59 +1988,116 @@ def sibga_avaluo():
     col_anio = _sibga_col_anio(modelo)
 
     try:
+        # 1. Buscar en caché
         conn = get_db_conn(); cur = conn.cursor()
         cur.execute(f"SELECT {col_anio}, linea, cilindraje FROM retefuente_bajocilindraje WHERE linea_id=%s",
                     (linea_id,))
         row = cur.fetchone(); cur.close(); conn.close()
         if row and row[0] and row[0] > 0:
-            return jsonify({
-                "avaluo":     row[0],
-                "linea":      row[1],
-                "cilindraje": row[2],
-                "modelo":     modelo,
-                "periodo":    SIBGA_PERIODO,
-                "fuente":     "cache"
-            })
+            return jsonify({"avaluo": row[0], "linea": row[1], "cilindraje": row[2],
+                            "modelo": modelo, "periodo": SIBGA_PERIODO, "fuente": "cache"})
 
+        # 2. Consultar SIBGA con Playwright + 2captcha
+        if not TWOCAPTCHA_API_KEY:
+            return jsonify({"error": "No hay API key de 2captcha configurada"}), 500
 
-        # Consultar SIBGA — establecer sesión primero navegando el formulario
-        s = requests.Session(); s.headers.update(SIBGA_HEADERS)
-        # 1. Cargar la página principal para obtener cookies
-        s.get("https://web.mintransporte.gov.co/Sibga/Home/Index", timeout=15)
-        # 2. Simular selección de tipo vehículo (motocicletas)
-        s.post(f"{SIBGA_BASE}/ObtenerClasesTipoVehiculo",
-               data={"tive": SIBGA_TIVE, "periodo": SIBGA_PERIODO}, timeout=10)
-        # 3. Simular selección de clase y marca
-        if marca_id:
-            s.post(f"{SIBGA_BASE}/ObtenerMarcasTipoVehiculo",
-                   data={"tive": SIBGA_TIVE, "clase": 7, "periodo": SIBGA_PERIODO}, timeout=10)
-            s.post(f"{SIBGA_BASE}/ObtenerLineasMarca",
-                   data={"tive": SIBGA_TIVE, "clase": 7, "marca": marca_id, "periodo": SIBGA_PERIODO}, timeout=10)
-        # 4. Ahora hacer el GET al avalúo con la sesión establecida
-        url = f"{SIBGA_BASE}/Proyeccion3/{linea_id}?mode={modelo}&periodo={SIBGA_PERIODO}"
-        r = s.get(url, timeout=20)
-        html = r.text
+        SIBGA_RECAPTCHA_KEY = "6LcfrmgfAAAAAAS4l12NLACrBsdVS5T6hpmxwa3L"
+        SIBGA_INDEX_URL     = "https://web.mintransporte.gov.co/Sibga/Home/Index"
 
-        # Extraer línea del resumen con re
-        linea_sibga = linea_nombre
-        m_linea = re.search(r'<th>[^<]*[Ll]inea[^<]*</th>\s*<td>([^<]+)</td>', html)
-        if m_linea: linea_sibga = m_linea.group(1).strip()
+        def _consultar_sibga():
+            from playwright.sync_api import sync_playwright as _pw
+            with _pw() as p:
+                browser = p.chromium.launch(headless=True, args=[
+                    "--no-sandbox","--disable-dev-shm-usage","--disable-gpu",
+                    "--single-process","--no-zygote"
+                ])
+                page = browser.new_page(user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                ))
+                try:
+                    page.goto(SIBGA_INDEX_URL, wait_until="domcontentloaded", timeout=30000)
 
-        # Extraer cilindraje del resumen
+                    # Seleccionar período 2024
+                    page.select_option("#aval_period", "2024")
+                    page.wait_for_timeout(300)
+
+                    # Seleccionar tipo vehículo = MOTOCICLETAS (6)
+                    page.select_option("#aval_idtive", "6")
+                    page.wait_for_timeout(1200)
+
+                    # Seleccionar clase MOTOCICLETA (7)
+                    page.wait_for_selector("#AVAL_IDCLAS option[value='7']", timeout=5000)
+                    page.select_option("#AVAL_IDCLAS", "7")
+                    page.wait_for_timeout(1000)
+
+                    # Seleccionar marca
+                    page.wait_for_selector(f"#AVAL_IDMARC option[value='{marca_id}']", timeout=5000)
+                    page.select_option("#AVAL_IDMARC", str(marca_id))
+                    page.wait_for_timeout(1000)
+
+                    # Seleccionar línea
+                    page.wait_for_selector(f"#AVAL_IDLINE option[value='{linea_id}']", timeout=5000)
+                    page.select_option("#AVAL_IDLINE", str(linea_id))
+                    page.wait_for_timeout(800)
+
+                    # Seleccionar primer cilindraje disponible
+                    page.wait_for_selector("#AVAL_CILIND option:nth-child(2)", timeout=3000)
+                    cil_options = page.locator("#AVAL_CILIND option").all()
+                    if len(cil_options) > 1:
+                        page.select_option("#AVAL_CILIND", cil_options[1].get_attribute("value"))
+                    page.wait_for_timeout(500)
+
+                    # Modelo y datos
+                    page.fill("input[name='modelo']", str(modelo))
+                    page.fill("input[name='Nombre']", "consulta")
+                    page.fill("input[name='Cedula']", "123456")
+
+                    # Resolver captcha
+                    token = resolver_recaptcha_2captcha(SIBGA_RECAPTCHA_KEY, SIBGA_INDEX_URL)
+                    page.evaluate(f"document.getElementById('g-recaptcha-response').value = '{token}'")
+                    page.wait_for_timeout(300)
+
+                    # Submit
+                    page.click("input[type='submit']")
+                    page.wait_for_selector("table.projection-summary-table", timeout=20000)
+                    return page.content()
+                finally:
+                    browser.close()
+
+        import threading as _th
+        resultado = {}
+        def _run():
+            try:
+                resultado['html'] = _consultar_sibga()
+            except Exception as e:
+                resultado['error'] = str(e)
+
+        t = _th.Thread(target=_run)
+        t.start()
+        t.join(timeout=120)
+
+        if 'error' in resultado:
+            return jsonify({"error": resultado['error']}), 500
+        if 'html' not in resultado:
+            return jsonify({"error": "Timeout consultando SIBGA"}), 504
+
+        html = resultado['html']
+
+        # Extraer datos del resumen
+        linea_sibga    = linea_nombre
         cilindraje_val = 0
-        m_cil = re.search(r'<th>[^<]*[Cc]ilindraje[^<]*</th>\s*<td>([^<]+)</td>', html)
-        if m_cil:
-            nums = re.findall(r'[0-9]+', m_cil.group(1))
+        m = re.search(r'<th>[^<]*[Ll]inea[^<]*</th>\s*<td>([^<]+)</td>', html)
+        if m: linea_sibga = m.group(1).strip()
+        m = re.search(r'<th>[^<]*[Cc]ilindraje[^<]*</th>\s*<td>([^<]+)</td>', html)
+        if m:
+            nums = re.findall(r'[0-9]+', m.group(1))
             if nums: cilindraje_val = int(nums[0])
 
-        # Extraer tabla completa de avalúos por modelo
-        avaluos_por_modelo = {}
-        print(f"[SIBGA] html len={len(html)}, status={r.status_code}")
-        # Buscar todos los años en la fila de Modelo
+        # Extraer tabla completa de modelos
         modelos_match = re.findall(r'<td>\s*((?:19|20)\d{2})\s*</td>', html)
-        # Buscar todos los valores en la fila de Valor Comercial
         valores_match = re.findall(r'<td>\s*\$\s*([\d\.]+)\s*</td>', html)
-        print(f"[SIBGA] modelos={modelos_match[:5]} valores={valores_match[:5]}")
+        avaluos_por_modelo = {}
         for anio_str, val_str in zip(modelos_match, valores_match):
             try:
                 avaluos_por_modelo[int(anio_str)] = int(val_str.replace('.','').replace(',',''))
@@ -2050,130 +2105,58 @@ def sibga_avaluo():
                 pass
 
         if not avaluos_por_modelo:
-            return jsonify({
-                "error": "No se encontraron avalúos en SIBGA",
-                "debug": {
-                    "html_len": len(html),
-                    "status_code": r.status_code,
-                    "modelos_encontrados": modelos_match[:5],
-                    "valores_encontrados": valores_match[:5],
-                    "html_snippet": html[:500],
-                }
-            }), 404
+            return jsonify({"error": "No se encontraron avalúos en SIBGA"}), 404
 
-        # Construir fila para insertar/actualizar
         cols_vals = {}
         for anio, val in avaluos_por_modelo.items():
-            if anio <= 2001:
-                cols_vals["anio_2001_ant"] = val
-            elif 2002 <= anio <= 2024:
-                cols_vals[f"anio_{anio}"] = val
+            if anio <= 2001:   cols_vals["anio_2001_ant"] = val
+            elif anio <= 2024: cols_vals[f"anio_{anio}"]  = val
 
-        if not cols_vals:
-            return jsonify({"error": "No se encontraron modelos válidos"}), 404
+        def _upsert(cur, lid, mnombre, lnombre, cil, cv):
+            cur.execute("SELECT id FROM retefuente_bajocilindraje WHERE linea_id=%s", (lid,))
+            exists = cur.fetchone()
+            if exists:
+                sc = ", ".join([f"{k}=%s" for k in cv])
+                cur.execute(f"UPDATE retefuente_bajocilindraje SET {sc}, linea=%s, cilindraje=%s WHERE linea_id=%s",
+                            list(cv.values()) + [lnombre, cil, lid])
+            else:
+                cn = ", ".join(cv.keys())
+                ph = ", ".join(["%s"] * len(cv))
+                cur.execute(f"""
+                    INSERT INTO retefuente_bajocilindraje (linea_id, marca, linea, cilindraje, {cn})
+                    VALUES (%s, %s, %s, %s, {ph})
+                """, [lid, mnombre, lnombre, cil] + list(cv.values()))
 
-        # Upsert en BD
         conn = get_db_conn(); cur = conn.cursor()
-        set_clause = ", ".join([f"{k}=%s" for k in cols_vals])
-        vals = list(cols_vals.values())
-        cur.execute(f"SELECT id FROM retefuente_bajocilindraje WHERE linea_id=%s", (linea_id,))
-        exists = cur.fetchone()
-        if exists:
-            cur.execute(f"UPDATE retefuente_bajocilindraje SET {set_clause}, linea=%s, cilindraje=%s WHERE linea_id=%s",
-                        vals + [linea_sibga, cilindraje_val, linea_id])
-        else:
-            col_names = ", ".join(cols_vals.keys())
-            placeholders = ", ".join(["%s"] * len(cols_vals))
-            cur.execute(f"""
-                INSERT INTO retefuente_bajocilindraje
-                    (linea_id, marca, linea, cilindraje, {col_names})
-                VALUES (%s, %s, %s, %s, {placeholders})
-            """, [linea_id, marca_nombre, linea_sibga, cilindraje_val] + vals)
+
+        # Guardar línea principal
+        _upsert(cur, linea_id, marca_nombre, linea_sibga, cilindraje_val, cols_vals)
+
+        # Cachear líneas relacionadas (mismos avalúos — son líneas de la misma familia)
+        relacionadas = re.findall(
+            r'Proyeccion2\?startId=\d+&amp;id=(\d+)&amp;mode=\d+.*?<td>([^<]+)</td>',
+            html
+        )
+        for rel_id, rel_nombre in relacionadas:
+            try:
+                rel_id = int(rel_id)
+                if rel_id != linea_id:
+                    _upsert(cur, rel_id, marca_nombre, rel_nombre.strip(), cilindraje_val, cols_vals)
+            except Exception:
+                pass
+
         conn.commit(); cur.close(); conn.close()
 
         avaluo_modelo = avaluos_por_modelo.get(modelo, 0)
         if not avaluo_modelo and modelo <= 2001:
             avaluo_modelo = cols_vals.get("anio_2001_ant", 0)
 
-        return jsonify({
-            "avaluo":     avaluo_modelo,
-            "linea":      linea_sibga,
-            "cilindraje": cilindraje_val,
-            "modelo":     modelo,
-            "periodo":    SIBGA_PERIODO,
-            "fuente":     "sibga"
-        })
+        return jsonify({"avaluo": avaluo_modelo, "linea": linea_sibga,
+                        "cilindraje": cilindraje_val, "modelo": modelo,
+                        "periodo": SIBGA_PERIODO, "fuente": "sibga",
+                        "relacionadas_cacheadas": len(relacionadas)})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/sibga/guardar-lote", methods=["POST"])
-def sibga_guardar_lote():
-    """Recibe avalúos desde el script de consola del navegador y los guarda en BD."""
-    try:
-        data  = request.get_json()
-        lote  = data.get("lote", [])
-        if not lote:
-            return jsonify({"ok": False, "error": "lote vacio"}), 400
-        conn = get_db_conn(); cur = conn.cursor()
-        guardados = 0
-        for item in lote:
-            linea_id     = item.get("linea_id")
-            marca        = item.get("marca", "").upper()
-            linea_nombre = item.get("linea", "").upper()
-            cilindraje   = item.get("cilindraje", 0)
-            avaluos      = item.get("avaluos", {})
-            if not linea_id or not avaluos:
-                continue
-            cols_vals = {}
-            for anio_str, val in avaluos.items():
-                try:
-                    anio = int(anio_str)
-                    val  = int(str(val).replace(".","").replace(",",""))
-                    if anio <= 2001:   cols_vals["anio_2001_ant"] = val
-                    elif anio <= 2024: cols_vals[f"anio_{anio}"]  = val
-                except Exception:
-                    continue
-            if not cols_vals:
-                continue
-            cur.execute("SELECT id FROM retefuente_bajocilindraje WHERE linea_id=%s", (linea_id,))
-            exists = cur.fetchone()
-            if exists:
-                set_clause = ", ".join([f"{k}=%s" for k in cols_vals])
-                cur.execute(f"UPDATE retefuente_bajocilindraje SET {set_clause}, linea=%s, cilindraje=%s WHERE linea_id=%s",
-                            list(cols_vals.values()) + [linea_nombre, cilindraje, linea_id])
-            else:
-                col_names    = ", ".join(cols_vals.keys())
-                placeholders = ", ".join(["%s"] * len(cols_vals))
-                cur.execute(f"""
-                    INSERT INTO retefuente_bajocilindraje (linea_id, marca, linea, cilindraje, {col_names})
-                    VALUES (%s, %s, %s, %s, {placeholders})
-                """, [linea_id, marca, linea_nombre, cilindraje] + list(cols_vals.values()))
-            guardados += 1
-        conn.commit(); cur.close(); conn.close()
-        return jsonify({"ok": True, "guardados": guardados})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
-
-
-@app.route("/sibga/pendientes", methods=["GET"])
-def sibga_pendientes():
-    """Devuelve líneas de motos pendientes de consultar en SIBGA."""
-    try:
-        inicio = request.args.get("inicio", 0, type=int)
-        limite = request.args.get("limite", 2000, type=int)
-        conn = get_db_conn(); cur = conn.cursor()
-        cur.execute("""
-            SELECT linea_id, marca, linea FROM retefuente_bajocilindraje
-            WHERE anio_2024 = 0 AND anio_2023 = 0 AND anio_2022 = 0
-            ORDER BY marca, linea
-            LIMIT %s OFFSET %s
-        """, (limite, inicio))
-        rows = cur.fetchall()
-        cur.close(); conn.close()
-        return jsonify({"lineas": [{"linea_id": r[0], "marca": r[1], "linea": r[2]} for r in rows],
-                        "total": len(rows)})
-    except Exception as e:
+        import traceback; print(traceback.format_exc())
         return jsonify({"error": str(e)}), 500
 
 
