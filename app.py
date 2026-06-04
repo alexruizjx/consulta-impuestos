@@ -2034,21 +2034,19 @@ def sibga_avaluo():
                     page.wait_for_timeout(1200)
 
                     # Seleccionar marca — esperar que carguen las opciones
-                    _mid = str(marca_id)
-                    _lid = str(linea_id)
                     page.wait_for_function(
-                        "(mid) => document.querySelector('#AVAL_IDMARC option[value="' + mid + '"]') !== null",
-                        arg=_mid, timeout=8000
+                        f"() => Array.from(document.querySelectorAll('#AVAL_IDMARC option')).some(o => o.value == '{marca_id}')",
+                        timeout=8000
                     )
-                    page.evaluate("(mid) => { document.getElementById('AVAL_IDMARC').value = mid; $('#AVAL_IDMARC').trigger('change'); }", _mid)
+                    page.evaluate(f"() => {{ document.getElementById('AVAL_IDMARC').value = '{marca_id}'; $('#AVAL_IDMARC').trigger('change'); }}")
                     page.wait_for_timeout(1200)
 
                     # Seleccionar línea — esperar que carguen las opciones
                     page.wait_for_function(
-                        "(lid) => document.querySelector('#AVAL_IDLINE option[value="' + lid + '"]') !== null",
-                        arg=_lid, timeout=8000
+                        f"() => Array.from(document.querySelectorAll('#AVAL_IDLINE option')).some(o => o.value == '{linea_id}')",
+                        timeout=8000
                     )
-                    page.evaluate("(lid) => { document.getElementById('AVAL_IDLINE').value = lid; $('#AVAL_IDLINE').trigger('change'); }", _lid)
+                    page.evaluate(f"() => {{ document.getElementById('AVAL_IDLINE').value = '{linea_id}'; $('#AVAL_IDLINE').trigger('change'); }}")
                     page.wait_for_timeout(1000)
 
                     # Seleccionar primer cilindraje disponible
