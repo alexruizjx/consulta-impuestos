@@ -2069,23 +2069,8 @@ def sibga_avaluo():
                     page.fill("input[name='modelo']", str(modelo))
                     page.fill("input[name='Nombre']", "consulta")
                     page.fill("input[name='Cedula']", "123456")
-                    page.wait_for_timeout(1000)
-
-                    # Seleccionar primer cilindraje disponible
-                    page.wait_for_function(
-                        "document.querySelectorAll('#AVAL_CILIND option').length > 1",
-                        timeout=5000
-                    )
-                    page.evaluate("""() => {
-                        var sel = document.getElementById('AVAL_CILIND');
-                        if (sel.options.length > 1) {
-                            sel.value = sel.options[1].value;
-                            $(sel).trigger('change');
-                        }
-                    }""")
                     page.wait_for_timeout(500)
-
-                    # Modelo y datos
+                    # Modelo y datos (ya llenados arriba, refrescar por si acaso)
                     page.fill("input[name='modelo']", str(modelo))
                     page.fill("input[name='Nombre']", "consulta")
                     page.fill("input[name='Cedula']", "123456")
