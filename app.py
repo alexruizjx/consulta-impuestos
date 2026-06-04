@@ -2082,7 +2082,12 @@ def sibga_avaluo():
 
                     # Submit
                     page.click("input[type='submit']")
-                    page.wait_for_selector("table.projection-summary-table", timeout=20000)
+                    try:
+                        page.wait_for_selector("table.projection-summary-table", timeout=20000)
+                    except Exception:
+                        # Capturar HTML para diagnóstico
+                        html_diag = page.content()
+                        raise Exception(f"Submit falló. URL={page.url} HTML_len={len(html_diag)} snippet={html_diag[500:1000]}")
                     return page.content()
                 finally:
                     browser.close()
