@@ -2024,28 +2024,45 @@ def sibga_avaluo():
 
                     # Seleccionar tipo vehículo = MOTOCICLETAS (6)
                     page.select_option("#aval_idtive", "6")
+                    # Esperar a que #hiddenForm sea visible (se muestra tras la respuesta AJAX)
+                    page.wait_for_selector("#hiddenForm", state="visible", timeout=8000)
+                    page.wait_for_timeout(500)
+
+                    # Seleccionar clase MOTOCICLETA (7) — usar evaluate para evitar hidden check
+                    page.evaluate("document.getElementById('AVAL_IDCLAS').value = '7'")
+                    page.evaluate("$('#AVAL_IDCLAS').trigger('change')")
                     page.wait_for_timeout(1200)
 
-                    # Seleccionar clase MOTOCICLETA (7)
-                    page.wait_for_selector("#AVAL_IDCLAS option[value='7']", timeout=5000)
-                    page.select_option("#AVAL_IDCLAS", "7")
-                    page.wait_for_timeout(1000)
+                    # Seleccionar marca — esperar que carguen las opciones
+                    _mid = str(marca_id)
+                    _lid = str(linea_id)
+                    page.wait_for_function(
+                        "(mid) => document.querySelector('#AVAL_IDMARC option[value="' + mid + '"]') !== null",
+                        arg=_mid, timeout=8000
+                    )
+                    page.evaluate("(mid) => { document.getElementById('AVAL_IDMARC').value = mid; $('#AVAL_IDMARC').trigger('change'); }", _mid)
+                    page.wait_for_timeout(1200)
 
-                    # Seleccionar marca
-                    page.wait_for_selector(f"#AVAL_IDMARC option[value='{marca_id}']", timeout=5000)
-                    page.select_option("#AVAL_IDMARC", str(marca_id))
+                    # Seleccionar línea — esperar que carguen las opciones
+                    page.wait_for_function(
+                        "(lid) => document.querySelector('#AVAL_IDLINE option[value="' + lid + '"]') !== null",
+                        arg=_lid, timeout=8000
+                    )
+                    page.evaluate("(lid) => { document.getElementById('AVAL_IDLINE').value = lid; $('#AVAL_IDLINE').trigger('change'); }", _lid)
                     page.wait_for_timeout(1000)
-
-                    # Seleccionar línea
-                    page.wait_for_selector(f"#AVAL_IDLINE option[value='{linea_id}']", timeout=5000)
-                    page.select_option("#AVAL_IDLINE", str(linea_id))
-                    page.wait_for_timeout(800)
 
                     # Seleccionar primer cilindraje disponible
-                    page.wait_for_selector("#AVAL_CILIND option:nth-child(2)", timeout=3000)
-                    cil_options = page.locator("#AVAL_CILIND option").all()
-                    if len(cil_options) > 1:
-                        page.select_option("#AVAL_CILIND", cil_options[1].get_attribute("value"))
+                    page.wait_for_function(
+                        "document.querySelectorAll('#AVAL_CILIND option').length > 1",
+                        timeout=5000
+                    )
+                    page.evaluate("""() => {
+                        var sel = document.getElementById('AVAL_CILIND');
+                        if (sel.options.length > 1) {
+                            sel.value = sel.options[1].value;
+                            $(sel).trigger('change');
+                        }
+                    }""")
                     page.wait_for_timeout(500)
 
                     # Modelo y datos
