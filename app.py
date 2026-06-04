@@ -2028,44 +2028,47 @@ def sibga_avaluo():
                     page.wait_for_selector("#hiddenForm", state="visible", timeout=8000)
                     page.wait_for_timeout(500)
 
-                    # Log estado inicial
-                    print(f"[SIBGA] hiddenForm visible: {page.locator('#hiddenForm').is_visible()}")
-                    print(f"[SIBGA] AVAL_IDCLAS opciones: {page.locator('#AVAL_IDCLAS option').count()}")
+                    # Obtener cilindraje via API (sin depender del DOM)
+                    _s = requests.Session()
+                    _s.headers.update(SIBGA_HEADERS)
+                    _r_cil = _s.post(f"{SIBGA_BASE}/ObtenerCilindraje",
+                        data={"tive": SIBGA_TIVE, "clase": 7, "marca": marca_id,
+                              "linea": linea_id, "periodo": SIBGA_PERIODO}, timeout=10)
+                    _cilindrajes = _r_cil.json() if _r_cil.status_code == 200 else []
+                    _cil_id = _cilindrajes[0]["id"] if _cilindrajes else 0
 
-                    # Seleccionar clase MOTOCICLETA (7)
-                    page.evaluate("document.getElementById('AVAL_IDCLAS').value = '7'")
-                    page.evaluate("$('#AVAL_IDCLAS').trigger('change')")
-                    page.wait_for_timeout(1500)
-
-                    # Log después de clase
-                    print(f"[SIBGA] AVAL_IDMARC opciones tras clase: {page.locator('#AVAL_IDMARC option').count()}")
-
-                    # Esperar marcas
-                    page.wait_for_function(
-                        "() => document.querySelectorAll('#AVAL_IDMARC option').length > 1",
-                        timeout=8000
-                    )
-                    print(f"[SIBGA] AVAL_IDMARC cargó: {page.locator('#AVAL_IDMARC option').count()} opciones")
-
-                    # Verificar que la marca existe
-                    marca_existe = page.evaluate(f"() => Array.from(document.querySelectorAll('#AVAL_IDMARC option')).some(o => o.value == '{marca_id}')")
-                    print(f"[SIBGA] marca_id={marca_id} existe: {marca_existe}")
-
-                    page.evaluate(f"() => {{ document.getElementById('AVAL_IDMARC').value = '{marca_id}'; $('#AVAL_IDMARC').trigger('change'); }}")
-                    page.wait_for_timeout(1500)
-
-                    # Log después de marca
-                    print(f"[SIBGA] AVAL_IDLINE opciones tras marca: {page.locator('#AVAL_IDLINE option').count()}")
-
-                    # Esperar líneas
-                    page.wait_for_function(
-                        "() => document.querySelectorAll('#AVAL_IDLINE option').length > 1",
-                        timeout=8000
-                    )
-                    linea_existe = page.evaluate(f"() => Array.from(document.querySelectorAll('#AVAL_IDLINE option')).some(o => o.value == '{linea_id}')")
-                    print(f"[SIBGA] linea_id={linea_id} existe: {linea_existe}")
-
-                    page.evaluate(f"() => {{ document.getElementById('AVAL_IDLINE').value = '{linea_id}'; $('#AVAL_IDLINE').trigger('change'); }}")
+                    # Llenar el formulario directamente via JavaScript sin esperar AJAX
+                    page.evaluate(f"""() => {{
+                        // Período
+                        document.getElementById('aval_period').value = '2024';
+                        // Tipo vehículo
+                        document.getElementById('aval_idtive').value = '6';
+                        // Mostrar hiddenForm
+                        document.getElementById('hiddenForm').style.display = '';
+                        // Clase
+                        var cls = document.getElementById('AVAL_IDCLAS');
+                        cls.innerHTML = '<option value="7">MOTOCICLETA</option>';
+                        cls.value = '7';
+                        document.getElementById('control_AVAL_IDCLAS').style.display = '';
+                        // Marca
+                        var marc = document.getElementById('AVAL_IDMARC');
+                        marc.innerHTML = '<option value="{marca_id}">MARCA</option>';
+                        marc.value = '{marca_id}';
+                        document.getElementById('control_AVAL_IDMARC').style.display = '';
+                        // Línea
+                        var lin = document.getElementById('AVAL_IDLINE');
+                        lin.innerHTML = '<option value="{linea_id}">LINEA</option>';
+                        lin.value = '{linea_id}';
+                        document.getElementById('control_AVAL_IDLINE').style.display = '';
+                        // Cilindraje
+                        var cil = document.getElementById('AVAL_CILIND');
+                        cil.innerHTML = '<option value="{_cil_id}">{_cil_id}</option>';
+                        cil.value = '{_cil_id}';
+                        document.getElementById('control_AVAL_CILIND').style.display = '';
+                    }}""")
+                    page.fill("input[name='modelo']", str(modelo))
+                    page.fill("input[name='Nombre']", "consulta")
+                    page.fill("input[name='Cedula']", "123456")
                     page.wait_for_timeout(1000)
 
                     # Seleccionar primer cilindraje disponible
