@@ -2028,24 +2028,43 @@ def sibga_avaluo():
                     page.wait_for_selector("#hiddenForm", state="visible", timeout=8000)
                     page.wait_for_timeout(500)
 
-                    # Seleccionar clase MOTOCICLETA (7) — usar evaluate para evitar hidden check
+                    # Log estado inicial
+                    print(f"[SIBGA] hiddenForm visible: {page.locator('#hiddenForm').is_visible()}")
+                    print(f"[SIBGA] AVAL_IDCLAS opciones: {page.locator('#AVAL_IDCLAS option').count()}")
+
+                    # Seleccionar clase MOTOCICLETA (7)
                     page.evaluate("document.getElementById('AVAL_IDCLAS').value = '7'")
                     page.evaluate("$('#AVAL_IDCLAS').trigger('change')")
-                    page.wait_for_timeout(1200)
+                    page.wait_for_timeout(1500)
 
-                    # Seleccionar marca — esperar que carguen las opciones
+                    # Log después de clase
+                    print(f"[SIBGA] AVAL_IDMARC opciones tras clase: {page.locator('#AVAL_IDMARC option').count()}")
+
+                    # Esperar marcas
                     page.wait_for_function(
-                        f"() => Array.from(document.querySelectorAll('#AVAL_IDMARC option')).some(o => o.value == '{marca_id}')",
+                        "() => document.querySelectorAll('#AVAL_IDMARC option').length > 1",
                         timeout=8000
                     )
+                    print(f"[SIBGA] AVAL_IDMARC cargó: {page.locator('#AVAL_IDMARC option').count()} opciones")
+
+                    # Verificar que la marca existe
+                    marca_existe = page.evaluate(f"() => Array.from(document.querySelectorAll('#AVAL_IDMARC option')).some(o => o.value == '{marca_id}')")
+                    print(f"[SIBGA] marca_id={marca_id} existe: {marca_existe}")
+
                     page.evaluate(f"() => {{ document.getElementById('AVAL_IDMARC').value = '{marca_id}'; $('#AVAL_IDMARC').trigger('change'); }}")
-                    page.wait_for_timeout(1200)
+                    page.wait_for_timeout(1500)
 
-                    # Seleccionar línea — esperar que carguen las opciones
+                    # Log después de marca
+                    print(f"[SIBGA] AVAL_IDLINE opciones tras marca: {page.locator('#AVAL_IDLINE option').count()}")
+
+                    # Esperar líneas
                     page.wait_for_function(
-                        f"() => Array.from(document.querySelectorAll('#AVAL_IDLINE option')).some(o => o.value == '{linea_id}')",
+                        "() => document.querySelectorAll('#AVAL_IDLINE option').length > 1",
                         timeout=8000
                     )
+                    linea_existe = page.evaluate(f"() => Array.from(document.querySelectorAll('#AVAL_IDLINE option')).some(o => o.value == '{linea_id}')")
+                    print(f"[SIBGA] linea_id={linea_id} existe: {linea_existe}")
+
                     page.evaluate(f"() => {{ document.getElementById('AVAL_IDLINE').value = '{linea_id}'; $('#AVAL_IDLINE').trigger('change'); }}")
                     page.wait_for_timeout(1000)
 
