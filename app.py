@@ -2077,11 +2077,30 @@ def sibga_avaluo():
 
                     # Resolver captcha
                     token = resolver_recaptcha_2captcha(SIBGA_RECAPTCHA_KEY, SIBGA_INDEX_URL)
-                    page.evaluate(f"document.getElementById('g-recaptcha-response').value = '{token}'")
-                    page.wait_for_timeout(300)
+                    # Inyectar token y disparar callback de reCAPTCHA
+                    page.evaluate(f"""() => {{
+                        document.getElementById('g-recaptcha-response').value = '{token}';
+                        document.getElementById('g-recaptcha-response').style.display = 'block';
+                        // Disparar callback si existe
+                        if (typeof grecaptcha !== 'undefined') {{
+                            try {{
+                                var resp = document.getElementById('g-recaptcha-response');
+                                resp.innerHTML = '{token}';
+                                // Buscar y ejecutar el callback del widget
+                                var widgets = document.querySelectorAll('.g-recaptcha');
+                                if (widgets.length > 0) {{
+                                    var callbackName = widgets[0].getAttribute('data-callback');
+                                    if (callbackName && window[callbackName]) {{
+                                        window[callbackName]('{token}');
+                                    }}
+                                }}
+                            }} catch(e) {{}}
+                        }}
+                    }}""")
+                    page.wait_for_timeout(500)
 
-                    # Submit
-                    page.click("input[type='submit']")
+                    # Submit via JS para evitar validación del browser
+                    page.evaluate("document.querySelector('form').submit()")
                     try:
                         page.wait_for_selector("table.projection-summary-table", timeout=20000)
                     except Exception:
