@@ -1405,10 +1405,7 @@ def retefuente_marcas_all():
         capacidad_m = request.args.get("capacidad","")
         if clase_bd:
             if clase_bd == 'CAMIONETA':
-                if _es_carga(capacidad_m):
-                    cur.execute("SELECT DISTINCT marca FROM retefuente_2026 WHERE clase='CAMIONETA' AND tabla='T7' ORDER BY marca")
-                else:
-                    cur.execute("SELECT DISTINCT marca FROM retefuente_2026 WHERE clase='CAMIONETAS Y CAMPEROS' ORDER BY marca")
+                cur.execute("SELECT DISTINCT marca FROM retefuente_2026 WHERE clase='CAMIONETA' AND tabla='T7' ORDER BY marca")
             else:
                 cur.execute("SELECT DISTINCT marca FROM retefuente_2026 WHERE clase=%s ORDER BY marca", (clase_bd,))
         elif clase:
@@ -1442,10 +1439,8 @@ def retefuente_lineas():
         capacidad_l = request.args.get("capacidad","")
         if clase_bd:
             if clase_bd == 'CAMIONETA':
-                if _es_carga(capacidad_l):
-                    cur.execute("SELECT DISTINCT linea FROM retefuente_2026 WHERE marca=%s AND clase='CAMIONETA' AND tabla='T7' ORDER BY linea", (marca,))
-                else:
-                    cur.execute("SELECT DISTINCT linea FROM retefuente_2026 WHERE marca=%s AND clase='CAMIONETAS Y CAMPEROS' ORDER BY linea", (marca,))
+                # clase_bd=CAMIONETA significa explícitamente camioneta de carga → T7
+                cur.execute("SELECT DISTINCT linea FROM retefuente_2026 WHERE marca=%s AND clase='CAMIONETA' AND tabla='T7' ORDER BY linea", (marca,))
             else:
                 cur.execute("SELECT DISTINCT linea FROM retefuente_2026 WHERE marca=%s AND clase=%s ORDER BY linea", (marca, clase_bd))
         elif clase:
@@ -1528,11 +1523,8 @@ def retefuente_opciones():
         capacidad  = request.args.get("capacidad", "")
         if clase_bd:
             if clase_bd == 'CAMIONETA':
-                if _es_carga(capacidad):
-                    where.append("clase = 'CAMIONETA'")
-                    where.append("tabla = 'T7'")
-                else:
-                    where.append("clase = 'CAMIONETAS Y CAMPEROS'")
+                where.append("clase = 'CAMIONETA'")
+                where.append("tabla = 'T7'")
             else:
                 where.append("clase = %s")
                 params.append(clase_bd)
@@ -1563,11 +1555,8 @@ def retefuente_opciones():
             params2 = [marca]
             if clase_bd:
                 if clase_bd == 'CAMIONETA':
-                    if _es_carga(capacidad):
-                        where2.append("clase = 'CAMIONETA'")
-                        where2.append("tabla = 'T7'")
-                    else:
-                        where2.append("clase = 'CAMIONETAS Y CAMPEROS'")
+                    where2.append("clase = 'CAMIONETA'")
+                    where2.append("tabla = 'T7'")
                 else:
                     where2.append("clase = %s")
                     params2.append(clase_bd)
