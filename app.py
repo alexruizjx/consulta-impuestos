@@ -1347,14 +1347,15 @@ def consultar_estado():
 def _tabla_retefuente(clase, carroceria=''):
     clase      = (clase or '').strip().upper()
     carroceria = (carroceria or '').strip().upper()
-    if clase in ('AUTOMOVIL', 'AUTOMÓVIL'):             return 'T1'
+    if clase in ('AUTOMOVIL', 'AUTOMÓVIL'):                          return 'T1'
+    if clase == 'CAMIONETA CARGA' or clase == 'CAMIONETA ESTACAS':   return 'T7'
     if clase == 'CAMIONETA':
         return 'T3' if carroceria == 'DOBLE CABINA' else 'T2'
-    if clase in ('CAMPERO',):                            return 'T2'
-    if clase in ('MOTOCICLETA', 'MOTOCARRO'):            return 'T5'
-    if clase in ('BUS', 'BUSETA', 'MICROBUS', 'MICROBÚS'): return 'T6'
-    if clase in ('CAMION', 'CAMIÓN', 'VOLQUETA'):        return 'T7'
-    if clase == 'AMBULANCIA':                            return 'T8'
+    if clase in ('CAMPERO',):                                         return 'T2'
+    if clase in ('MOTOCICLETA', 'MOTOCARRO'):                         return 'T5'
+    if clase in ('BUS', 'BUSETA', 'MICROBUS', 'MICROBÚS'):           return 'T6'
+    if clase in ('CAMION', 'CAMIÓN', 'VOLQUETA', 'TRACTOCAMION'):    return 'T7'
+    if clase == 'AMBULANCIA':                                         return 'T8'
     return None
 
 def _col_anio(modelo):
