@@ -1344,13 +1344,34 @@ def consultar_estado():
 # ============================================================
 
 # Mapeo clase OCR → tabla retefuente
-def _tabla_retefuente(clase, carroceria=''):
+def _es_carga(capacidad):
+    """Devuelve True si la capacidad indica carga (kg) en lugar de pasajeros."""
+    if not capacidad:
+        return False
+    cap = str(capacidad).strip().upper().replace('.','').replace(',','')
+    # Si contiene KG o KILO es carga
+    if 'KG' in cap or 'KILO' in cap or 'TON' in cap:
+        return True
+    # Si contiene PAX o PASAJERO es pasajeros
+    if 'PAX' in cap or 'PASAJERO' in cap or 'PASAJ' in cap:
+        return False
+    # Si es número puro para CAMIONETA: >=100 = carga (kg), <100 = pasajeros
+    try:
+        num = int(re.sub(r'[^0-9]', '', cap))
+        return num >= 100
+    except Exception:
+        return False
+
+
+def _tabla_retefuente(clase, carroceria='', capacidad=''):
     clase      = (clase or '').strip().upper()
     carroceria = (carroceria or '').strip().upper()
     if clase in ('AUTOMOVIL', 'AUTOMÓVIL'):                          return 'T1'
     if clase == 'CAMIONETA CARGA' or clase == 'CAMIONETA ESTACAS':   return 'T7'
     if clase == 'CAMIONETA':
-        return 'T3' if carroceria == 'DOBLE CABINA' else 'T2'
+        if carroceria == 'DOBLE CABINA':                             return 'T3'
+        if _es_carga(capacidad):                                     return 'T7'
+        return 'T2'
     if clase in ('CAMPERO',):                                         return 'T2'
     if clase in ('MOTOCICLETA', 'MOTOCARRO'):                         return 'T5'
     if clase in ('BUS', 'BUSETA', 'MICROBUS', 'MICROBÚS'):           return 'T6'
@@ -1384,7 +1405,7 @@ def retefuente_marcas_all():
         if clase_bd:
             cur.execute("SELECT DISTINCT marca FROM retefuente_2026 WHERE clase=%s ORDER BY marca", (clase_bd,))
         elif clase:
-            tabla = _tabla_retefuente(clase, carroceria)
+            tabla = _tabla_retefuente(clase, carroceria, request.args.get('capacidad',''))
             if tabla:
                 cur.execute("SELECT DISTINCT marca FROM retefuente_2026 WHERE tabla=%s ORDER BY marca", (tabla,))
             else:
@@ -1413,7 +1434,7 @@ def retefuente_lineas():
         if clase_bd:
             cur.execute("SELECT DISTINCT linea FROM retefuente_2026 WHERE marca=%s AND clase=%s ORDER BY linea", (marca, clase_bd))
         elif clase:
-            tabla = _tabla_retefuente(clase, carroceria)
+            tabla = _tabla_retefuente(clase, carroceria, request.args.get('capacidad',''))
             if tabla:
                 cur.execute("SELECT DISTINCT linea FROM retefuente_2026 WHERE marca=%s AND tabla=%s ORDER BY linea", (marca, tabla))
             else:
@@ -1493,7 +1514,7 @@ def retefuente_opciones():
             where.append("clase = %s")
             params.append(clase_bd)
         elif clase:
-            tabla = _tabla_retefuente(clase, carroceria)
+            tabla = _tabla_retefuente(clase, carroceria, request.args.get('capacidad',''))
             if tabla:
                 where.append("tabla = %s")
                 params.append(tabla)
@@ -1521,7 +1542,7 @@ def retefuente_opciones():
                 where2.append("clase = %s")
                 params2.append(clase_bd)
             elif clase:
-                tabla = _tabla_retefuente(clase, carroceria)
+                tabla = _tabla_retefuente(clase, carroceria, request.args.get('capacidad',''))
                 if tabla:
                     where2.append("tabla = %s")
                     params2.append(tabla)
@@ -1584,7 +1605,7 @@ def retefuente_buscar():
     if not marca or not clase or not modelo:
         return jsonify({"error": "Debes enviar marca, clase y modelo."}), 400
 
-    tabla = _tabla_retefuente(clase, carroceria)
+    tabla = _tabla_retefuente(clase, carroceria, request.args.get('capacidad',''))
     if not tabla:
         return jsonify({"error": f"Clase '{clase}' no tiene tabla de retefuente."}), 400
 
@@ -1663,7 +1684,7 @@ def retefuente_marcas():
     """Devuelve lista de marcas disponibles para una tabla."""
     clase      = request.args.get("clase", "").strip().upper()
     carroceria = request.args.get("carroceria", "").strip().upper()
-    tabla = _tabla_retefuente(clase, carroceria)
+    tabla = _tabla_retefuente(clase, carroceria, request.args.get('capacidad',''))
     if not tabla:
         return jsonify({"error": "Clase no reconocida"}), 400
     try:
