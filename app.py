@@ -1561,15 +1561,6 @@ def retefuente_opciones():
         cur.execute(sql, params)
         rows = cur.fetchall()
 
-        # Ordenar en Python: 1) cilindraje más cercano, 2) mayor coincidencia con línea del OCR
-        linea_words = [w.upper() for w in linea.split() if len(w) > 1][:5] if linea else []
-        def score_row(r):
-            cil_r   = r[2] or 0
-            cil_dist = abs(cil_r - cil) if cil > 0 else cil_r
-            lin_score = sum(1 for w in linea_words if w in (r[1] or '').upper())
-            return (cil_dist, -lin_score)
-        rows = sorted(rows, key=score_row)[:20]
-
         # Si no hay resultados con filtro de linea, buscar sin él
         if not rows and linea:
             where2  = ["marca = %s", f"{col_anio} > 0"]
@@ -1600,8 +1591,15 @@ def retefuente_opciones():
             """
             cur.execute(sql2, params2)
             rows = cur.fetchall()
-            # Aplicar mismo sorting al fallback
-            rows = sorted(rows, key=score_row)[:20]
+
+        # Ordenar en Python: 1) cilindraje más cercano, 2) mayor coincidencia con línea del OCR
+        linea_words = [w.upper() for w in linea.split() if len(w) > 1][:5] if linea else []
+        def score_row(r):
+            cil_r    = r[2] or 0
+            cil_dist = abs(cil_r - cil) if cil > 0 else cil_r
+            lin_score = sum(1 for w in linea_words if w in (r[1] or '').upper())
+            return (cil_dist, -lin_score)
+        rows = sorted(rows, key=score_row)[:20]
 
         cur.close(); conn.close()
 
