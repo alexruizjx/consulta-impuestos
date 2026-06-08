@@ -1556,7 +1556,7 @@ def retefuente_opciones():
             FROM retefuente_2026
             WHERE {' AND '.join(where)}
             ORDER BY cilindraje ASC
-            LIMIT 20
+            LIMIT 40
         """
         cur.execute(sql, params)
         rows = cur.fetchall()
@@ -1599,7 +1599,7 @@ def retefuente_opciones():
             cil_dist = abs(cil_r - cil) if cil > 0 else cil_r
             lin_score = sum(1 for w in linea_words if w in (r[1] or '').upper())
             return (cil_dist, -lin_score)
-        rows = sorted(rows, key=score_row)[:10]
+        rows = sorted(rows, key=score_row)[:20]
 
         cur.close(); conn.close()
 
@@ -2071,7 +2071,7 @@ def sibga_opciones():
             FROM retefuente_bajocilindraje
             WHERE {' AND '.join(where)}
             ORDER BY cilindraje ASC
-            LIMIT 20
+            LIMIT 40
         """
         cur.execute(sql, params)
         rows = cur.fetchall()
