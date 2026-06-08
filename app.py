@@ -1556,7 +1556,7 @@ def retefuente_opciones():
             FROM retefuente_2026
             WHERE {' AND '.join(where)}
             ORDER BY cilindraje ASC
-            LIMIT 40
+            LIMIT 20
         """
         cur.execute(sql, params)
         rows = cur.fetchall()
@@ -1599,7 +1599,7 @@ def retefuente_opciones():
             cil_dist = abs(cil_r - cil) if cil > 0 else cil_r
             lin_score = sum(1 for w in linea_words if w in (r[1] or '').upper())
             return (cil_dist, -lin_score)
-        rows = sorted(rows, key=score_row)[:20]
+        rows = sorted(rows, key=score_row)[:10]
 
         cur.close(); conn.close()
 
@@ -1619,8 +1619,9 @@ def retefuente_opciones():
                 "avaluo":     r[4],
                 "retefuente": round(r[4] / 100) if r[4] else 0,
                 "clase_veh":  r[5] or TABLA_CLASE.get(r[3], r[3]),
-                "tonelaje":   float(r[6]) if r[6] else None,
-                "pasajeros":  r[7] if r[7] else None,
+                "tonelaje":    float(r[6]) if r[6] else None,
+                "tonelaje_kg": int(float(r[6]) * 1000) if r[6] else None,
+                "pasajeros":   r[7] if r[7] else None,
             }
             opciones.append(op)
 
