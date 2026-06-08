@@ -1344,6 +1344,16 @@ def consultar_estado():
 # ============================================================
 
 # Mapeo clase OCR → tabla retefuente
+def _normalizar_marca(cur, marca):
+    """Si la marca no existe exacta, busca por ILIKE y devuelve la más cercana."""
+    cur.execute("SELECT COUNT(*) FROM retefuente_2026 WHERE marca = %s", (marca,))
+    if cur.fetchone()[0] > 0:
+        return marca
+    cur.execute("SELECT DISTINCT marca FROM retefuente_2026 WHERE marca ILIKE %s LIMIT 1", (f"%{marca}%",))
+    row = cur.fetchone()
+    return row[0] if row else marca
+
+
 def _es_carga(capacidad):
     """Devuelve True si la capacidad indica carga (kg) en lugar de pasajeros."""
     if not capacidad:
@@ -1437,6 +1447,7 @@ def retefuente_lineas():
         cur  = conn.cursor()
         capacidad = request.args.get('capacidad','')
         capacidad_l = request.args.get("capacidad","")
+        marca = _normalizar_marca(cur, marca)
         if clase_bd:
             if clase_bd == 'CAMIONETA':
                 # clase_bd=CAMIONETA significa explícitamente camioneta de carga → T7
@@ -1510,6 +1521,7 @@ def retefuente_opciones():
         conn = get_db_conn()
         cur  = conn.cursor()
 
+        marca  = _normalizar_marca(cur, marca)
         where  = ["marca = %s", f"{col_anio} > 0"]
         params = [marca]
 
