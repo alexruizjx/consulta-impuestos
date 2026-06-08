@@ -1550,29 +1550,25 @@ def retefuente_opciones():
             where.append("cilindraje >= %s")
             params.append(cil)
 
-        # Ordenar: cilindraje exacto primero, luego mayor coincidencia de línea
-        linea_words = [w for w in linea.split() if len(w) > 1][:5] if linea else []
-        if linea_words:
-            match_cases = " + ".join([f"CASE WHEN linea ILIKE '%%{w}%%' THEN 1 ELSE 0 END" for w in linea_words])
-            if cil > 0:
-                order_by = f"ABS(cilindraje - {cil}) ASC, ({match_cases}) DESC, cilindraje ASC"
-            else:
-                order_by = f"({match_cases}) DESC, cilindraje ASC"
-        elif cil > 0:
-            order_by = f"ABS(cilindraje - {cil}) ASC, cilindraje ASC"
-        else:
-            order_by = "cilindraje ASC"
-
         sql = f"""
             SELECT marca, linea, cilindraje, tabla, {col_anio} as avaluo,
                    clase, tonelaje, pasajeros
             FROM retefuente_2026
             WHERE {' AND '.join(where)}
-            ORDER BY {order_by}
-            LIMIT 20
+            ORDER BY cilindraje ASC
+            LIMIT 40
         """
         cur.execute(sql, params)
         rows = cur.fetchall()
+
+        # Ordenar en Python: 1) cilindraje más cercano, 2) mayor coincidencia con línea del OCR
+        linea_words = [w.upper() for w in linea.split() if len(w) > 1][:5] if linea else []
+        def score_row(r):
+            cil_r   = r[2] or 0
+            cil_dist = abs(cil_r - cil) if cil > 0 else cil_r
+            lin_score = sum(1 for w in linea_words if w in (r[1] or '').upper())
+            return (cil_dist, -lin_score)
+        rows = sorted(rows, key=score_row)[:20]
 
         # Si no hay resultados con filtro de linea, buscar sin él
         if not rows and linea:
