@@ -1600,6 +1600,8 @@ def retefuente_opciones():
             """
             cur.execute(sql2, params2)
             rows = cur.fetchall()
+            # Aplicar mismo sorting al fallback
+            rows = sorted(rows, key=score_row)[:20]
 
         cur.close(); conn.close()
 
