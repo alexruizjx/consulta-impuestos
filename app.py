@@ -1550,12 +1550,23 @@ def retefuente_opciones():
             where.append("cilindraje >= %s")
             params.append(cil)
 
+        # Ordenar: palabras de la línea que coinciden primero, luego cilindraje exacto
+        linea_words = [w for w in linea.split() if len(w) > 1][:5] if linea else []
+        if linea_words:
+            match_cases = " + ".join([f"CASE WHEN linea ILIKE '%%{w}%%' THEN 1 ELSE 0 END" for w in linea_words])
+            cil_dist = f"ABS(cilindraje - {cil})," if cil > 0 else ""
+            order_by = f"({match_cases}) DESC, {cil_dist} cilindraje ASC"
+        elif cil > 0:
+            order_by = f"ABS(cilindraje - {cil}) ASC, cilindraje ASC"
+        else:
+            order_by = "cilindraje ASC"
+
         sql = f"""
             SELECT marca, linea, cilindraje, tabla, {col_anio} as avaluo,
                    clase, tonelaje, pasajeros
             FROM retefuente_2026
             WHERE {' AND '.join(where)}
-            ORDER BY cilindraje ASC
+            ORDER BY {order_by}
             LIMIT 20
         """
         cur.execute(sql, params)
@@ -1580,12 +1591,13 @@ def retefuente_opciones():
             if cil > 0:
                 where2.append("cilindraje >= %s")
                 params2.append(cil)
+            cil_dist2 = f"ABS(cilindraje - {cil})," if cil > 0 else ""
             sql2 = f"""
                 SELECT marca, linea, cilindraje, tabla, {col_anio} as avaluo,
                        clase, tonelaje, pasajeros
                 FROM retefuente_2026
                 WHERE {' AND '.join(where2)}
-                ORDER BY cilindraje ASC
+                ORDER BY {cil_dist2} cilindraje ASC
                 LIMIT 20
             """
             cur.execute(sql2, params2)
