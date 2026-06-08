@@ -14,7 +14,7 @@ from flask import Flask, request, jsonify
 from playwright.sync_api import sync_playwright
 from flask_cors import CORS
 
-app = Flask(__name__)
+app = Flask(__name__)  # v54.1
 CORS(app, resources={r"/*": {"origins": "*"}})
 
 TIMEOUT = 10000
