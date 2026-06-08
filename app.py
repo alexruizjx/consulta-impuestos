@@ -1550,12 +1550,14 @@ def retefuente_opciones():
             where.append("cilindraje >= %s")
             params.append(cil)
 
-        # Ordenar: palabras de la línea que coinciden primero, luego cilindraje exacto
+        # Ordenar: cilindraje exacto primero, luego mayor coincidencia de línea
         linea_words = [w for w in linea.split() if len(w) > 1][:5] if linea else []
         if linea_words:
             match_cases = " + ".join([f"CASE WHEN linea ILIKE '%%{w}%%' THEN 1 ELSE 0 END" for w in linea_words])
-            cil_dist = f"ABS(cilindraje - {cil})," if cil > 0 else ""
-            order_by = f"({match_cases}) DESC, {cil_dist} cilindraje ASC"
+            if cil > 0:
+                order_by = f"ABS(cilindraje - {cil}) ASC, ({match_cases}) DESC, cilindraje ASC"
+            else:
+                order_by = f"({match_cases}) DESC, cilindraje ASC"
         elif cil > 0:
             order_by = f"ABS(cilindraje - {cil}) ASC, cilindraje ASC"
         else:
