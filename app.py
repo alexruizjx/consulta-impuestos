@@ -1367,7 +1367,11 @@ def _es_carga(capacidad):
         return False
     # Si es número puro para CAMIONETA: >=100 = carga (kg), <100 = pasajeros
     try:
-        num = int(re.sub(r'[^0-9]', '', cap))
+        # Limpiar puntos de miles y comas decimales
+        cap_clean = re.sub(r'[^0-9]', '', cap)
+        num = int(cap_clean)
+        # Si el número original tiene punto como separador de miles (ej: 5.610 -> 5610)
+        # ya se limpió arriba. Si era 5 pasajeros sería simplemente "5"
         return num >= 100
     except Exception:
         return False
@@ -1513,7 +1517,8 @@ def retefuente_opciones():
     col_anio = _col_anio(str(anio_int))
 
     try:
-        cil = int(cilindraje) if cilindraje else 0
+        # Limpiar puntos de miles y comas decimales (ej: 3.760 -> 3760)
+        cil = int(re.sub(r'[^0-9]', '', cilindraje)) if cilindraje else 0
     except:
         cil = 0
 
@@ -2057,6 +2062,7 @@ def sibga_opciones():
         conn = get_db_conn(); cur = conn.cursor()
 
         # Buscar por marca + palabras de la línea
+        cil_sibga = int(re.sub(r'[^0-9]', '', request.args.get('cilindraje','0') or '0') or 0)
         where  = ["marca = %s", f"{col_anio} > 0", "cilindraje <= 125", "cilindraje > 0"]
         params = [marca]
 
@@ -2083,9 +2089,18 @@ def sibga_opciones():
                 FROM retefuente_bajocilindraje
                 WHERE marca=%s AND {col_anio} > 0 AND cilindraje <= 125 AND cilindraje > 0
                 ORDER BY cilindraje ASC
-                LIMIT 20
+                LIMIT 40
             """, (marca,))
             rows = cur.fetchall()
+
+        # Ordenar: cilindraje más cercano primero, luego mayor coincidencia con línea
+        linea_words_s = [w.upper() for w in (linea or '').split() if len(w) > 1][:5]
+        def score_sibga(r):
+            cil_r = r[2] or 0
+            cil_dist = abs(cil_r - cil_sibga) if cil_sibga > 0 else cil_r
+            lin_score = sum(1 for w in linea_words_s if w in (r[1] or '').upper())
+            return (cil_dist, -lin_score)
+        rows = sorted(rows, key=score_sibga)[:20]
 
         cur.close(); conn.close()
 
