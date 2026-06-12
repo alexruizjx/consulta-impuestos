@@ -2071,9 +2071,12 @@ def sibga_opciones():
             linea_sep = re.sub(r'([A-Za-z])(\d)', r'\1 \2', linea)
             linea_sep = re.sub(r'(\d)([A-Za-z])', r'\1 \2', linea_sep)
             palabras = [p for p in linea_sep.split() if len(p) > 1][:5]
-            for p in palabras:
-                where.append("REPLACE(linea, ' ', '') ILIKE %s")
-                params.append(f'%{p}%')
+            if palabras:
+                or_conds = []
+                for p in palabras:
+                    or_conds.append("REPLACE(linea, ' ', '') ILIKE %s")
+                    params.append(f'%{p}%')
+                where.append("(" + " OR ".join(or_conds) + ")")
 
         sql = f"""
             SELECT linea_id, linea, cilindraje, {col_anio} as avaluo
