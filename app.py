@@ -2067,9 +2067,12 @@ def sibga_opciones():
         params = [marca]
 
         if linea:
-            palabras = [p for p in linea.split() if len(p) > 2][:3]
+            # Separar letras y números pegados: AK125 -> AK 125
+            linea_sep = re.sub(r'([A-Za-z])(\d)', r'\1 \2', linea)
+            linea_sep = re.sub(r'(\d)([A-Za-z])', r'\1 \2', linea_sep)
+            palabras = [p for p in linea_sep.split() if len(p) > 1][:5]
             for p in palabras:
-                where.append("linea ILIKE %s")
+                where.append("REPLACE(linea, ' ', '') ILIKE %s")
                 params.append(f'%{p}%')
 
         sql = f"""
