@@ -2083,7 +2083,7 @@ def sibga_opciones():
             FROM retefuente_bajocilindraje
             WHERE {' AND '.join(where)}
             ORDER BY cilindraje ASC
-            LIMIT 40
+            LIMIT 200
         """
         cur.execute(sql, params)
         rows = cur.fetchall()
