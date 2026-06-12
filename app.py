@@ -2100,11 +2100,17 @@ def sibga_opciones():
             rows = cur.fetchall()
 
         # Ordenar: cilindraje más cercano primero, luego mayor coincidencia con línea
-        linea_words_s = [w.upper() for w in (linea or '').split() if len(w) > 1][:5]
+        if linea:
+            linea_sep2 = re.sub(r'([A-Za-z])(\d)', r'\1 \2', linea)
+            linea_sep2 = re.sub(r'(\d)([A-Za-z])', r'\1 \2', linea_sep2)
+            linea_words_s = [w.upper() for w in linea_sep2.split() if len(w) > 1][:5]
+        else:
+            linea_words_s = []
         def score_sibga(r):
             cil_r = r[2] or 0
             cil_dist = abs(cil_r - cil_sibga) if cil_sibga > 0 else cil_r
-            lin_score = sum(1 for w in linea_words_s if w in (r[1] or '').upper())
+            linea_db_sin_esp = (r[1] or '').upper().replace(' ', '')
+            lin_score = sum(1 for w in linea_words_s if w in linea_db_sin_esp)
             return (cil_dist, -lin_score)
         rows = sorted(rows, key=score_sibga)[:20]
 
