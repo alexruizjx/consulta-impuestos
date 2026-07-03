@@ -48,7 +48,7 @@ ANTIOQUIA_TIPO_DOC_MAP = {
     "TI": "6", "RC": "7", "CD": "8", "PPT": "29"
 }
 
-ANTIOQUIA_LIMITE_VIGENCIAS = 10
+ANTIOQUIA_LIMITE_VIGENCIAS = 0
 
 
 def get_db_conn():
