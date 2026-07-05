@@ -331,12 +331,16 @@ def consultar_envigado(page, placa):
         const texto = document.body.innerText;
         const tabla = document.querySelector('#tablaCollapseVigencias');
         const noMatriculado = texto.includes('El vehiculo no se encuentra matriculado en la Secretaria de Movilidad');
-        const pazYSalvo = texto.includes('Último pago realizado');
-        return tabla || noMatriculado || pazYSalvo;
+        // Paz y salvo: esperar que la tabla tenga al menos una fila con dato real
+        const pazYSalvoHeader = texto.includes('Último pago realizado');
+        const pazYSalvoConDatos = pazYSalvoHeader && document.querySelectorAll('table tr td').length >= 3;
+        return tabla || noMatriculado || pazYSalvoConDatos;
     }""", timeout=TIMEOUT)
     if page.get_by_text(MSG_NO_MATRICULADO).is_visible():
         return [], 0
 
+    # Espera extra para que Angular termine de renderizar
+    page.wait_for_timeout(1500)
     texto_pagina = page.inner_text("body")
 
     # Paz y salvo — extraer datos de la tabla "Último pago realizado"
@@ -389,7 +393,15 @@ def consultar_sabaneta(page, placa):
     page.locator("#placa").wait_for(state="visible", timeout=15000)
     page.locator("#placa").fill(placa)
     page.get_by_role("button", name="Buscar").click()
-    page.wait_for_timeout(20000)
+    # Esperar resultado real — no timeout fijo
+    page.wait_for_function("""() => {
+        const texto = document.body.innerText;
+        const noMatriculado = texto.includes('El vehiculo no se encuentra matriculado');
+        const pazYSalvo = texto.includes('Último pago realizado') && document.querySelectorAll('table tr td').length >= 3;
+        const conDeuda = document.querySelector('#tablaCollapseVigencias tr td');
+        return noMatriculado || pazYSalvo || conDeuda;
+    }""", timeout=60000)
+    page.wait_for_timeout(1000)
     texto_pagina = page.inner_text("body")
     if MSG_NO_MATRICULADO in texto_pagina:
         return [], 0
@@ -402,7 +414,7 @@ def consultar_sabaneta(page, placa):
     checkbox.wait_for(state="visible", timeout=15000)
     if checkbox.is_enabled():
         checkbox.check()
-    page.wait_for_timeout(5000)
+    page.wait_for_timeout(2000)
     spans_cop = page.locator("span.fs-16.ng-binding").all()
     total = 0
     for span in spans_cop[::-1]:
@@ -496,7 +508,14 @@ def consultar_bello(page, placa):
         page.wait_for_url("**/impuesto-local", timeout=15000)
     except:
         return [], 0
-    page.wait_for_timeout(10000)
+    # Esperar resultado real — no timeout fijo
+    page.wait_for_function("""() => {
+        const texto = document.body.innerText;
+        const pazYSalvo = texto.includes('paz y salvo') || texto.includes('No se encontraron registros');
+        const conDeuda  = texto.includes('Vigencias pendientes') && document.querySelector('tbody tr td') !== null;
+        return pazYSalvo || conDeuda;
+    }""", timeout=60000)
+    page.wait_for_timeout(1000)
     texto_pagina = page.inner_text("body")
     if 'paz y salvo' in texto_pagina or 'No se encontraron registros' in texto_pagina:
         return [], 0
@@ -1160,19 +1179,61 @@ def consultar():
             return jsonify({"error": "La consulta tardo demasiado. Intenta de nuevo."}), 504
         if error_container:
             return jsonify({"error": error_container['error']}), 500
-        registros_mun = resultado.get('registros', [])
-        total_mun     = resultado.get('total', 0)
-        # Extraer fecha_pago si Envigado devolvió paz y salvo
+        registros_mun  = resultado.get('registros', [])
+        total_mun      = resultado.get('total', 0)
         fecha_pago_mun = ""
+
+        # Extraer fecha_pago si Envigado devolvió paz y salvo
         if registros_mun and registros_mun[0].get('paz_y_salvo'):
             fecha_pago_mun = registros_mun[0].get('fecha_pago', '')
-            registros_mun  = []  # no mostrar como vigencias pendientes
+            registros_mun  = []
+            total_mun      = 0
+
+        # Reintento automático si paz y salvo sin fecha (posible falso positivo)
+        # Solo aplica para municipios que retornan fecha_pago (ej: envigado)
+        if total_mun == 0 and not fecha_pago_mun and municipio == "envigado":
+            resultado2      = {}
+            error2          = {}
+            def _reintento():
+                try:
+                    with sync_playwright() as pw2:
+                        b2 = pw2.chromium.launch(headless=True, args=[
+                            "--no-sandbox","--disable-dev-shm-usage","--disable-gpu",
+                            "--single-process","--no-zygote","--disable-setuid-sandbox"
+                        ])
+                        ctx2  = b2.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                        pg2   = ctx2.new_page()
+                        bloquear_recursos(pg2)
+                        r2, t2 = consultar_envigado(pg2, placa)
+                        resultado2['registros'] = r2
+                        resultado2['total']     = t2
+                        ctx2.close(); b2.close()
+                except Exception as e2:
+                    error2['error'] = str(e2)
+            import threading as _th2
+            hilo2 = _th2.Thread(target=_reintento)
+            hilo2.start()
+            hilo2.join(timeout=120)
+            if not error2 and resultado2:
+                r2 = resultado2.get('registros', [])
+                t2 = resultado2.get('total', 0)
+                fp2 = ""
+                if r2 and r2[0].get('paz_y_salvo'):
+                    fp2 = r2[0].get('fecha_pago', '')
+                    r2  = []
+                    t2  = 0
+                # Si el reintento también da paz y salvo con fecha → confirmado
+                # Si el reintento da deuda → el primero era falso positivo
+                registros_mun  = r2
+                total_mun      = t2
+                fecha_pago_mun = fp2
+
         return jsonify({
             "placa":      placa,
             "municipio":  municipio,
             "registros":  registros_mun,
             "total":      total_mun,
-            "sin_deuda":  total_mun == 0,
+            "sin_deuda":  total_mun == 0 and not registros_mun,
             "fecha_pago": fecha_pago_mun,
         })
 
