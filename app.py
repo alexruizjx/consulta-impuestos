@@ -328,12 +328,41 @@ def consultar_envigado(page, placa):
     page.get_by_role("textbox", name="Placa").fill(placa)
     page.get_by_role("button", name="Buscar").click()
     page.wait_for_function("""() => {
+        const texto = document.body.innerText;
         const tabla = document.querySelector('#tablaCollapseVigencias');
-        const noMatriculado = document.body.innerText.includes('El vehiculo no se encuentra matriculado en la Secretaria de Movilidad');
-        return tabla || noMatriculado;
+        const noMatriculado = texto.includes('El vehiculo no se encuentra matriculado en la Secretaria de Movilidad');
+        const pazYSalvo = texto.includes('Último pago realizado');
+        return tabla || noMatriculado || pazYSalvo;
     }""", timeout=TIMEOUT)
     if page.get_by_text(MSG_NO_MATRICULADO).is_visible():
         return [], 0
+
+    texto_pagina = page.inner_text("body")
+
+    # Paz y salvo — extraer datos de la tabla "Último pago realizado"
+    if 'Último pago realizado' in texto_pagina and '#tablaCollapseVigencias' not in texto_pagina:
+        fecha_pago = ""
+        marca_veh  = ""
+        try:
+            # Buscar filas de la tabla de último pago
+            filas = page.locator("table tr").all()
+            for fila in filas:
+                celdas = fila.locator("td").all()
+                if len(celdas) >= 3:
+                    marca_veh  = celdas[1].inner_text().strip()
+                    fecha_pago = celdas[2].inner_text().strip()
+                    break
+        except Exception:
+            pass
+        return [{
+            "vigencia":       "PAZ Y SALVO",
+            "estado":         f"Vehículo a paz y salvo en el Tránsito de Envigado. Último pago: {fecha_pago}".strip(". "),
+            "total_vigencia": 0,
+            "paz_y_salvo":    True,
+            "fecha_pago":     fecha_pago,
+            "marca":          marca_veh,
+        }], 0
+
     if page.locator("#selectall").is_visible():
         page.locator("#selectall").check()
     registros = []
@@ -1131,12 +1160,20 @@ def consultar():
             return jsonify({"error": "La consulta tardo demasiado. Intenta de nuevo."}), 504
         if error_container:
             return jsonify({"error": error_container['error']}), 500
+        registros_mun = resultado.get('registros', [])
+        total_mun     = resultado.get('total', 0)
+        # Extraer fecha_pago si Envigado devolvió paz y salvo
+        fecha_pago_mun = ""
+        if registros_mun and registros_mun[0].get('paz_y_salvo'):
+            fecha_pago_mun = registros_mun[0].get('fecha_pago', '')
+            registros_mun  = []  # no mostrar como vigencias pendientes
         return jsonify({
-            "placa":     placa,
-            "municipio": municipio,
-            "registros": resultado.get('registros', []),
-            "total":     resultado.get('total', 0),
-            "sin_deuda": resultado.get('total', 0) == 0
+            "placa":      placa,
+            "municipio":  municipio,
+            "registros":  registros_mun,
+            "total":      total_mun,
+            "sin_deuda":  total_mun == 0,
+            "fecha_pago": fecha_pago_mun,
         })
 
     # Antioquia — verificar caché de vigencias antes de lanzar Playwright
