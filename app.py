@@ -393,20 +393,35 @@ def consultar_sabaneta(page, placa):
     page.locator("#placa").wait_for(state="visible", timeout=15000)
     page.locator("#placa").fill(placa)
     page.get_by_role("button", name="Buscar").click()
-    # Esperar resultado real — no timeout fijo
-    page.wait_for_function("""() => {
-        const texto = document.body.innerText;
-        const noMatriculado = texto.includes('El vehiculo no se encuentra matriculado');
-        const pazYSalvo = texto.includes('Último pago realizado') && document.querySelectorAll('table tr td').length >= 3;
-        const conDeuda = document.querySelector('#tablaCollapseVigencias tr td');
-        return noMatriculado || pazYSalvo || conDeuda;
-    }""", timeout=60000)
-    page.wait_for_timeout(1000)
+    page.wait_for_timeout(20000)
     texto_pagina = page.inner_text("body")
     if MSG_NO_MATRICULADO in texto_pagina:
         return [], 0
     if 'Último pago realizado' in texto_pagina and 'Vigencias pendientes' not in texto_pagina:
-        return [], 0
+        # Extraer datos de la tabla de último pago
+        placa_sab = ""; marca_sab = ""; fecha_sab = ""; valor_sab = ""
+        try:
+            filas = page.locator("table tr").all()
+            for fila in filas:
+                celdas = fila.locator("td").all()
+                if len(celdas) >= 2:
+                    placa_sab = celdas[0].inner_text().strip()
+                    marca_sab = celdas[1].inner_text().strip()
+                    if len(celdas) >= 3: fecha_sab = celdas[2].inner_text().strip()
+                    if len(celdas) >= 4: valor_sab = celdas[3].inner_text().strip()
+                    break
+        except Exception:
+            pass
+        return [{
+            "vigencia":       "PAZ Y SALVO",
+            "estado":         "Vehículo a paz y salvo en el Tránsito de Sabaneta.",
+            "total_vigencia": 0,
+            "paz_y_salvo":    True,
+            "placa_info":     placa_sab,
+            "marca":          marca_sab,
+            "fecha_pago":     fecha_sab,
+            "valor_pago":     valor_sab,
+        }], 0
     if 'Vigencias pendientes' not in texto_pagina:
         return [], 0
     page.locator("#tablaCollapseVigencias").wait_for(state="visible", timeout=15000)
@@ -414,7 +429,7 @@ def consultar_sabaneta(page, placa):
     checkbox.wait_for(state="visible", timeout=15000)
     if checkbox.is_enabled():
         checkbox.check()
-    page.wait_for_timeout(2000)
+    page.wait_for_timeout(5000)
     spans_cop = page.locator("span.fs-16.ng-binding").all()
     total = 0
     for span in spans_cop[::-1]:
@@ -508,14 +523,7 @@ def consultar_bello(page, placa):
         page.wait_for_url("**/impuesto-local", timeout=15000)
     except:
         return [], 0
-    # Esperar resultado real — no timeout fijo
-    page.wait_for_function("""() => {
-        const texto = document.body.innerText;
-        const pazYSalvo = texto.includes('paz y salvo') || texto.includes('No se encontraron registros');
-        const conDeuda  = texto.includes('Vigencias pendientes') && document.querySelector('tbody tr td') !== null;
-        return pazYSalvo || conDeuda;
-    }""", timeout=60000)
-    page.wait_for_timeout(1000)
+    page.wait_for_timeout(10000)
     texto_pagina = page.inner_text("body")
     if 'paz y salvo' in texto_pagina or 'No se encontraron registros' in texto_pagina:
         return [], 0
@@ -1182,10 +1190,15 @@ def consultar():
         registros_mun  = resultado.get('registros', [])
         total_mun      = resultado.get('total', 0)
         fecha_pago_mun = ""
+        marca_pago_mun = ""
+        valor_pago_mun = ""
 
-        # Extraer fecha_pago si Envigado devolvió paz y salvo
+        # Extraer datos de paz y salvo si el municipio los devuelve
         if registros_mun and registros_mun[0].get('paz_y_salvo'):
-            fecha_pago_mun = registros_mun[0].get('fecha_pago', '')
+            r0             = registros_mun[0]
+            fecha_pago_mun = r0.get('fecha_pago', '')
+            marca_pago_mun = r0.get('marca', '')
+            valor_pago_mun = r0.get('valor_pago', '')
             registros_mun  = []
             total_mun      = 0
 
@@ -1235,6 +1248,8 @@ def consultar():
             "total":      total_mun,
             "sin_deuda":  total_mun == 0 and not registros_mun,
             "fecha_pago": fecha_pago_mun,
+            "marca":      marca_pago_mun,
+            "valor_pago": valor_pago_mun,
         })
 
     # Antioquia — verificar caché de vigencias antes de lanzar Playwright
