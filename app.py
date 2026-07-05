@@ -403,13 +403,13 @@ def consultar_sabaneta(page, placa):
             fila = page.locator("#tablaUltimosPagos tbody tr").first
             celdas = fila.locator("td").all()
             texts = [c.inner_text().strip() for c in celdas]
-            # Orden: Placa, Marca, Fecha pago, Valor pago
+            print(f"[SABANETA] celdas encontradas: {len(texts)} -> {texts}", flush=True)
             if len(texts) > 0: placa_sab = texts[0]
             if len(texts) > 1: marca_sab = texts[1]
             if len(texts) > 2: fecha_sab = texts[2]
             if len(texts) > 3: valor_sab = texts[3]
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[SABANETA] error extrayendo tabla: {e}", flush=True)
         return [{
             "vigencia":       "PAZ Y SALVO",
             "estado":         "Vehículo a paz y salvo en el Tránsito de Sabaneta.",
