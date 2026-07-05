@@ -394,21 +394,20 @@ def consultar_sabaneta(page, placa):
     page.get_by_role("button", name="Buscar").click()
     page.wait_for_timeout(20000)
     texto_pagina = page.inner_text("body")
+    html_pagina  = page.content()
     if MSG_NO_MATRICULADO in texto_pagina:
         return [], 0
     if 'Último pago realizado' in texto_pagina and 'Vigencias pendientes' not in texto_pagina:
-        # Esperar que la tabla tenga datos
-        try:
-            page.wait_for_selector("#tablaUltimosPagos tbody tr td", timeout=5000)
-        except Exception:
-            pass
         placa_sab = ""; marca_sab = ""; fecha_sab = ""; valor_sab = ""
         try:
             fila = page.locator("#tablaUltimosPagos tbody tr").first
-            placa_sab = (fila.locator("td[data-label='Placa']").inner_text() or "").strip()
-            marca_sab = (fila.locator("td[data-label='Marca']").inner_text() or "").strip()
-            fecha_sab = (fila.locator("td[data-label='Fecha pago']").inner_text() or "").strip()
-            valor_sab = (fila.locator("td[data-label='Valor pago (COP)']").inner_text() or "").strip()
+            celdas = fila.locator("td").all()
+            texts = [c.inner_text().strip() for c in celdas]
+            # Orden: Placa, Marca, Fecha pago, Valor pago
+            if len(texts) > 0: placa_sab = texts[0]
+            if len(texts) > 1: marca_sab = texts[1]
+            if len(texts) > 2: fecha_sab = texts[2]
+            if len(texts) > 3: valor_sab = texts[3]
         except Exception:
             pass
         return [{
@@ -440,6 +439,18 @@ def consultar_sabaneta(page, placa):
                 break
             except ValueError:
                 pass
+    # Extraer datos de último pago aunque haya deuda
+    marca_ult = ""; fecha_ult = ""; valor_ult = ""
+    try:
+        fila_ult = page.locator("#tablaUltimosPagos tbody tr").first
+        celdas_ult = fila_ult.locator("td").all()
+        texts_ult = [c.inner_text().strip() for c in celdas_ult]
+        if len(texts_ult) > 1: marca_ult = texts_ult[1]
+        if len(texts_ult) > 2: fecha_ult = texts_ult[2]
+        if len(texts_ult) > 3: valor_ult = texts_ult[3]
+    except Exception:
+        pass
+
     registros = []
     filas = page.locator("#tablaCollapseVigencias tr").all()
     for fila in filas:
@@ -451,7 +462,13 @@ def consultar_sabaneta(page, placa):
         if año and montos:
             valor_fila = montos[-1].replace('COP', '').replace(' ', '').replace('.', '')
             try:
-                registros.append({'vigencia': año.group(), 'estado': 'Pendiente de pago', 'total_vigencia': int(valor_fila)})
+                registros.append({
+                    'vigencia': año.group(), 'estado': 'Pendiente de pago',
+                    'total_vigencia': int(valor_fila),
+                    'marca_ultimo_pago': marca_ult,
+                    'fecha_ultimo_pago': fecha_ult,
+                    'valor_ultimo_pago': valor_ult,
+                })
             except ValueError:
                 pass
     return registros, total
@@ -1200,6 +1217,12 @@ def consultar():
             valor_pago_mun = r0.get('valor_pago', '')
             registros_mun  = []
             total_mun      = 0
+        # Extraer último pago de registros con deuda (si viene en el primer registro)
+        elif registros_mun and registros_mun[0].get('fecha_ultimo_pago'):
+            r0             = registros_mun[0]
+            fecha_pago_mun = r0.get('fecha_ultimo_pago', '')
+            marca_pago_mun = r0.get('marca_ultimo_pago', '')
+            valor_pago_mun = r0.get('valor_ultimo_pago', '')
 
         # Reintento automático si paz y salvo sin fecha (posible falso positivo)
         # Solo aplica para municipios que retornan fecha_pago (ej: envigado)
