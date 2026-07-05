@@ -345,6 +345,10 @@ def consultar_envigado(page, placa):
 
     # Paz y salvo — extraer datos de la tabla #tablaUltimosPagos
     if 'Último pago realizado' in texto_pagina and '#tablaCollapseVigencias' not in texto_pagina:
+        try:
+            page.wait_for_selector("#tablaUltimosPagos tbody tr td", timeout=5000)
+        except Exception:
+            pass
         fecha_pago = ""
         marca_veh  = ""
         try:
@@ -393,7 +397,11 @@ def consultar_sabaneta(page, placa):
     if MSG_NO_MATRICULADO in texto_pagina:
         return [], 0
     if 'Último pago realizado' in texto_pagina and 'Vigencias pendientes' not in texto_pagina:
-        # Extraer datos de la tabla #tablaUltimosPagos
+        # Esperar que la tabla tenga datos
+        try:
+            page.wait_for_selector("#tablaUltimosPagos tbody tr td", timeout=5000)
+        except Exception:
+            pass
         placa_sab = ""; marca_sab = ""; fecha_sab = ""; valor_sab = ""
         try:
             fila = page.locator("#tablaUltimosPagos tbody tr").first
