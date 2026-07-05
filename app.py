@@ -343,19 +343,14 @@ def consultar_envigado(page, placa):
     page.wait_for_timeout(1500)
     texto_pagina = page.inner_text("body")
 
-    # Paz y salvo — extraer datos de la tabla "Último pago realizado"
+    # Paz y salvo — extraer datos de la tabla #tablaUltimosPagos
     if 'Último pago realizado' in texto_pagina and '#tablaCollapseVigencias' not in texto_pagina:
         fecha_pago = ""
         marca_veh  = ""
         try:
-            # Buscar filas de la tabla de último pago
-            filas = page.locator("table tr").all()
-            for fila in filas:
-                celdas = fila.locator("td").all()
-                if len(celdas) >= 3:
-                    marca_veh  = celdas[1].inner_text().strip()
-                    fecha_pago = celdas[2].inner_text().strip()
-                    break
+            fila = page.locator("#tablaUltimosPagos tbody tr").first
+            marca_veh  = (fila.locator("td[data-label='Marca']").inner_text() or "").strip()
+            fecha_pago = (fila.locator("td[data-label='Fecha pago']").inner_text() or "").strip()
         except Exception:
             pass
         return [{
@@ -398,18 +393,14 @@ def consultar_sabaneta(page, placa):
     if MSG_NO_MATRICULADO in texto_pagina:
         return [], 0
     if 'Último pago realizado' in texto_pagina and 'Vigencias pendientes' not in texto_pagina:
-        # Extraer datos de la tabla de último pago
+        # Extraer datos de la tabla #tablaUltimosPagos
         placa_sab = ""; marca_sab = ""; fecha_sab = ""; valor_sab = ""
         try:
-            filas = page.locator("table tr").all()
-            for fila in filas:
-                celdas = fila.locator("td").all()
-                if len(celdas) >= 2:
-                    placa_sab = celdas[0].inner_text().strip()
-                    marca_sab = celdas[1].inner_text().strip()
-                    if len(celdas) >= 3: fecha_sab = celdas[2].inner_text().strip()
-                    if len(celdas) >= 4: valor_sab = celdas[3].inner_text().strip()
-                    break
+            fila = page.locator("#tablaUltimosPagos tbody tr").first
+            placa_sab = (fila.locator("td[data-label='Placa']").inner_text() or "").strip()
+            marca_sab = (fila.locator("td[data-label='Marca']").inner_text() or "").strip()
+            fecha_sab = (fila.locator("td[data-label='Fecha pago']").inner_text() or "").strip()
+            valor_sab = (fila.locator("td[data-label='Valor pago (COP)']").inner_text() or "").strip()
         except Exception:
             pass
         return [{
