@@ -351,8 +351,10 @@ def consultar_envigado(page, placa):
             pass
         fecha_pago = ""
         marca_veh  = ""
+        placa_veh  = ""
         try:
             fila = page.locator("#tablaUltimosPagos tbody tr").first
+            placa_veh  = (fila.locator("td[data-label='Placa']").inner_text() or "").strip()
             marca_veh  = (fila.locator("td[data-label='Marca']").inner_text() or "").strip()
             fecha_pago = (fila.locator("td[data-label='Fecha pago']").inner_text() or "").strip()
         except Exception:
@@ -364,10 +366,23 @@ def consultar_envigado(page, placa):
             "paz_y_salvo":    True,
             "fecha_pago":     fecha_pago,
             "marca":          marca_veh,
+            "placa_info":     placa_veh,
         }], 0
 
     if page.locator("#selectall").is_visible():
         page.locator("#selectall").check()
+
+    # Extraer datos de último pago aunque haya deuda (verificación anti-falso-positivo)
+    placa_ult = ""; marca_ult = ""; fecha_ult = ""; valor_ult = ""
+    try:
+        fila_ult = page.locator("#tablaUltimosPagos tbody tr").first
+        placa_ult  = (fila_ult.locator("td[data-label='Placa']").inner_text() or "").strip()
+        marca_ult  = (fila_ult.locator("td[data-label='Marca']").inner_text() or "").strip()
+        fecha_ult  = (fila_ult.locator("td[data-label='Fecha pago']").inner_text() or "").strip()
+        valor_ult  = (fila_ult.locator("td[data-label='Valor pago']").inner_text() or "").strip()
+    except Exception:
+        pass
+
     registros = []
     filas = page.locator("#tablaCollapseVigencias tr").all()
     for fila in filas:
@@ -379,7 +394,14 @@ def consultar_envigado(page, placa):
         if año and montos:
             valor_str = montos[-1].replace('$', '').replace(' ', '').replace('.', '')
             try:
-                registros.append({'vigencia': año.group(), 'estado': 'Pendiente de pago', 'total_vigencia': int(valor_str)})
+                registros.append({
+                    'vigencia': año.group(), 'estado': 'Pendiente de pago',
+                    'total_vigencia': int(valor_str),
+                    'placa_ultimo_pago': placa_ult,
+                    'marca_ultimo_pago': marca_ult,
+                    'fecha_ultimo_pago': fecha_ult,
+                    'valor_ultimo_pago': valor_ult,
+                })
             except ValueError:
                 pass
     total = sum(r['total_vigencia'] for r in registros)
