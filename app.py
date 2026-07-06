@@ -520,8 +520,31 @@ def consultar_itagui(page, placa):
     texto_pagina = page.inner_text("body")
     if MSG_NO_MATRICULADO in texto_pagina:
         return [], 0
+
+    # Paz y salvo — extraer datos de verificación (placa/marca/fecha) igual que Envigado
     if 'Vigencias pendientes' not in texto_pagina and AÑO_ACTUAL in texto_pagina:
-        return [], 0
+        try:
+            page.wait_for_selector("#tablaUltimosPagos tbody tr td", timeout=5000)
+        except Exception:
+            pass
+        placa_veh = ""; marca_veh = ""; fecha_pago = ""
+        try:
+            fila = page.locator("#tablaUltimosPagos tbody tr").first
+            placa_veh  = (fila.locator("td[data-label='Placa']").inner_text() or "").strip()
+            marca_veh  = (fila.locator("td[data-label='Marca']").inner_text() or "").strip()
+            fecha_pago = (fila.locator("td[data-label='Fecha pago']").inner_text() or "").strip()
+        except Exception:
+            pass
+        return [{
+            "vigencia":       "PAZ Y SALVO",
+            "estado":         f"Vehículo a paz y salvo en el Tránsito de Itagüí. Último pago: {fecha_pago}".strip(". "),
+            "total_vigencia": 0,
+            "paz_y_salvo":    True,
+            "fecha_pago":     fecha_pago,
+            "marca":          marca_veh,
+            "placa_info":     placa_veh,
+        }], 0
+
     page.locator("#tablaCollapseVigencias").wait_for(state="visible", timeout=15000)
     checkbox = page.locator("#selectall")
     checkbox.wait_for(state="visible", timeout=15000)
@@ -539,6 +562,18 @@ def consultar_itagui(page, placa):
                 break
             except ValueError:
                 pass
+
+    # Extraer datos de último pago aunque haya deuda (verificación anti-falso-positivo)
+    placa_ult = ""; marca_ult = ""; fecha_ult = ""; valor_ult = ""
+    try:
+        fila_ult = page.locator("#tablaUltimosPagos tbody tr").first
+        placa_ult = (fila_ult.locator("td[data-label='Placa']").inner_text() or "").strip()
+        marca_ult = (fila_ult.locator("td[data-label='Marca']").inner_text() or "").strip()
+        fecha_ult = (fila_ult.locator("td[data-label='Fecha pago']").inner_text() or "").strip()
+        valor_ult = (fila_ult.locator("td[data-label='Valor pago']").inner_text() or "").strip()
+    except Exception:
+        pass
+
     registros = []
     filas = page.locator("#tablaCollapseVigencias tr").all()
     for fila in filas:
@@ -550,7 +585,14 @@ def consultar_itagui(page, placa):
         if año and montos:
             valor_fila = montos[-1].replace('COP', '').replace(' ', '').replace('.', '')
             try:
-                registros.append({'vigencia': año.group(), 'estado': 'Pendiente de pago', 'total_vigencia': int(valor_fila)})
+                registros.append({
+                    'vigencia': año.group(), 'estado': 'Pendiente de pago',
+                    'total_vigencia': int(valor_fila),
+                    'placa_ultimo_pago': placa_ult,
+                    'marca_ultimo_pago': marca_ult,
+                    'fecha_ultimo_pago': fecha_ult,
+                    'valor_ultimo_pago': valor_ult,
+                })
             except ValueError:
                 pass
     return registros, total
@@ -1262,7 +1304,7 @@ def consultar():
         # (posible falso positivo: la página no cargó los datos reales del vehículo).
         # Se considera "verificado" cuando trajo placa y/o marca vistas en la página.
         verificado_mun = bool(placa_vista_mun or marca_pago_mun)
-        if total_mun == 0 and not verificado_mun and municipio in ("envigado", "sabaneta"):
+        if total_mun == 0 and not verificado_mun and municipio in ("envigado", "sabaneta", "itagui"):
             resultado2    = {}
             error2        = {}
             funcion_reint = MUNICIPIOS[municipio]
