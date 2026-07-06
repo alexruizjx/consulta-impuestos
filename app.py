@@ -403,13 +403,13 @@ def consultar_sabaneta(page, placa):
             fila = page.locator("#tablaUltimosPagos tbody tr").first
             celdas = fila.locator("td").all()
             texts = [c.inner_text().strip() for c in celdas]
-            print(f"[SABANETA] celdas encontradas: {len(texts)} -> {texts}", flush=True)
+            # Orden: Placa, Marca, Fecha pago, Valor pago
             if len(texts) > 0: placa_sab = texts[0]
             if len(texts) > 1: marca_sab = texts[1]
             if len(texts) > 2: fecha_sab = texts[2]
             if len(texts) > 3: valor_sab = texts[3]
-        except Exception as e:
-            print(f"[SABANETA] error extrayendo tabla: {e}", flush=True)
+        except Exception:
+            pass
         return [{
             "vigencia":       "PAZ Y SALVO",
             "estado":         "Vehículo a paz y salvo en el Tránsito de Sabaneta.",
@@ -439,12 +439,14 @@ def consultar_sabaneta(page, placa):
                 break
             except ValueError:
                 pass
-    # Extraer datos de último pago aunque haya deuda
-    marca_ult = ""; fecha_ult = ""; valor_ult = ""
+    # Extraer datos de último pago aunque haya deuda (sirven para verificar
+    # que el scraper realmente consultó ESTE vehículo y no un falso positivo)
+    placa_ult = ""; marca_ult = ""; fecha_ult = ""; valor_ult = ""
     try:
         fila_ult = page.locator("#tablaUltimosPagos tbody tr").first
         celdas_ult = fila_ult.locator("td").all()
         texts_ult = [c.inner_text().strip() for c in celdas_ult]
+        if len(texts_ult) > 0: placa_ult = texts_ult[0]
         if len(texts_ult) > 1: marca_ult = texts_ult[1]
         if len(texts_ult) > 2: fecha_ult = texts_ult[2]
         if len(texts_ult) > 3: valor_ult = texts_ult[3]
@@ -465,6 +467,7 @@ def consultar_sabaneta(page, placa):
                 registros.append({
                     'vigencia': año.group(), 'estado': 'Pendiente de pago',
                     'total_vigencia': int(valor_fila),
+                    'placa_ultimo_pago': placa_ult,
                     'marca_ultimo_pago': marca_ult,
                     'fecha_ultimo_pago': fecha_ult,
                     'valor_ultimo_pago': valor_ult,
@@ -1203,32 +1206,38 @@ def consultar():
             return jsonify({"error": "La consulta tardo demasiado. Intenta de nuevo."}), 504
         if error_container:
             return jsonify({"error": error_container['error']}), 500
-        registros_mun  = resultado.get('registros', [])
-        total_mun      = resultado.get('total', 0)
-        fecha_pago_mun = ""
-        marca_pago_mun = ""
-        valor_pago_mun = ""
+        registros_mun   = resultado.get('registros', [])
+        total_mun       = resultado.get('total', 0)
+        fecha_pago_mun  = ""
+        marca_pago_mun  = ""
+        valor_pago_mun  = ""
+        placa_vista_mun = ""
 
         # Extraer datos de paz y salvo si el municipio los devuelve
         if registros_mun and registros_mun[0].get('paz_y_salvo'):
-            r0             = registros_mun[0]
-            fecha_pago_mun = r0.get('fecha_pago', '')
-            marca_pago_mun = r0.get('marca', '')
-            valor_pago_mun = r0.get('valor_pago', '')
-            registros_mun  = []
-            total_mun      = 0
+            r0              = registros_mun[0]
+            fecha_pago_mun  = r0.get('fecha_pago', '')
+            marca_pago_mun  = r0.get('marca', '')
+            valor_pago_mun  = r0.get('valor_pago', '')
+            placa_vista_mun = r0.get('placa_info', '')
+            registros_mun   = []
+            total_mun       = 0
         # Extraer último pago de registros con deuda (si viene en el primer registro)
         elif registros_mun and registros_mun[0].get('fecha_ultimo_pago'):
-            r0             = registros_mun[0]
-            fecha_pago_mun = r0.get('fecha_ultimo_pago', '')
-            marca_pago_mun = r0.get('marca_ultimo_pago', '')
-            valor_pago_mun = r0.get('valor_ultimo_pago', '')
+            r0              = registros_mun[0]
+            fecha_pago_mun  = r0.get('fecha_ultimo_pago', '')
+            marca_pago_mun  = r0.get('marca_ultimo_pago', '')
+            valor_pago_mun  = r0.get('valor_ultimo_pago', '')
+            placa_vista_mun = r0.get('placa_ultimo_pago', '')
 
-        # Reintento automático si paz y salvo sin fecha (posible falso positivo)
-        # Solo aplica para municipios que retornan fecha_pago (ej: envigado)
-        if total_mun == 0 and not fecha_pago_mun and municipio == "envigado":
-            resultado2      = {}
-            error2          = {}
+        # Reintento automático si paz y salvo sin evidencia de verificación
+        # (posible falso positivo: la página no cargó los datos reales del vehículo).
+        # Se considera "verificado" cuando trajo placa y/o marca vistas en la página.
+        verificado_mun = bool(placa_vista_mun or marca_pago_mun)
+        if total_mun == 0 and not verificado_mun and municipio in ("envigado", "sabaneta"):
+            resultado2    = {}
+            error2        = {}
+            funcion_reint = MUNICIPIOS[municipio]
             def _reintento():
                 try:
                     with sync_playwright() as pw2:
@@ -1239,7 +1248,7 @@ def consultar():
                         ctx2  = b2.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
                         pg2   = ctx2.new_page()
                         bloquear_recursos(pg2)
-                        r2, t2 = consultar_envigado(pg2, placa)
+                        r2, t2 = funcion_reint(pg2, placa)
                         resultado2['registros'] = r2
                         resultado2['total']     = t2
                         ctx2.close(); b2.close()
@@ -1252,26 +1261,40 @@ def consultar():
             if not error2 and resultado2:
                 r2 = resultado2.get('registros', [])
                 t2 = resultado2.get('total', 0)
-                fp2 = ""
+                fp2 = ""; mp2 = ""; vp2 = ""; pv2 = ""
                 if r2 and r2[0].get('paz_y_salvo'):
                     fp2 = r2[0].get('fecha_pago', '')
+                    mp2 = r2[0].get('marca', '')
+                    vp2 = r2[0].get('valor_pago', '')
+                    pv2 = r2[0].get('placa_info', '')
                     r2  = []
                     t2  = 0
-                # Si el reintento también da paz y salvo con fecha → confirmado
+                elif r2 and r2[0].get('fecha_ultimo_pago'):
+                    fp2 = r2[0].get('fecha_ultimo_pago', '')
+                    mp2 = r2[0].get('marca_ultimo_pago', '')
+                    vp2 = r2[0].get('valor_ultimo_pago', '')
+                    pv2 = r2[0].get('placa_ultimo_pago', '')
+                # Si el reintento también da paz y salvo verificado → confirmado
                 # Si el reintento da deuda → el primero era falso positivo
-                registros_mun  = r2
-                total_mun      = t2
-                fecha_pago_mun = fp2
+                registros_mun   = r2
+                total_mun       = t2
+                fecha_pago_mun  = fp2
+                marca_pago_mun  = mp2
+                valor_pago_mun  = vp2
+                placa_vista_mun = pv2
+                verificado_mun  = bool(pv2 or mp2)
 
         return jsonify({
-            "placa":      placa,
-            "municipio":  municipio,
-            "registros":  registros_mun,
-            "total":      total_mun,
-            "sin_deuda":  total_mun == 0 and not registros_mun,
-            "fecha_pago": fecha_pago_mun,
-            "marca":      marca_pago_mun,
-            "valor_pago": valor_pago_mun,
+            "placa":       placa,
+            "municipio":   municipio,
+            "registros":   registros_mun,
+            "total":       total_mun,
+            "sin_deuda":   total_mun == 0 and not registros_mun,
+            "verificado":  verificado_mun,
+            "placa_vista": placa_vista_mun,
+            "fecha_pago":  fecha_pago_mun,
+            "marca":       marca_pago_mun,
+            "valor_pago":  valor_pago_mun,
         })
 
     # Antioquia — verificar caché de vigencias antes de lanzar Playwright
