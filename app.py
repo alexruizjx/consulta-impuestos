@@ -343,11 +343,15 @@ def consultar_envigado(page, placa):
     page.wait_for_timeout(1500)
     texto_pagina = page.inner_text("body")
 
-    # Verificar en el DOM real si existe la tabla de vigencias pendientes
-    # (antes se comparaba contra el texto '#tablaCollapseVigencias', que es un
-    # selector CSS y NUNCA aparece como texto visible en la página — por eso
-    # el sistema entraba siempre a "paz y salvo" así hubiera deuda real).
-    tiene_vigencias_pendientes = page.locator("#tablaCollapseVigencias").count() > 0
+    # Verificar en el DOM real si existe Y ES VISIBLE la tabla de vigencias
+    # pendientes. La tabla #tablaCollapseVigencias SIEMPRE existe en el DOM
+    # (Angular la renderiza vacía), solo se oculta con ng-hide en el div
+    # contenedor cuando no hay deuda — por eso hay que chequear visibilidad
+    # real (is_visible), no solo presencia (.count() > 0).
+    try:
+        tiene_vigencias_pendientes = page.locator("#tablaCollapseVigencias").is_visible()
+    except Exception:
+        tiene_vigencias_pendientes = False
 
     # Paz y salvo — extraer datos de la tabla #tablaUltimosPagos
     if 'Último pago realizado' in texto_pagina and not tiene_vigencias_pendientes:
