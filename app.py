@@ -625,7 +625,7 @@ def consultar_bello(page, placa):
                 placa_v = (fila.locator("td[data-label='Placa']").inner_text() or "").strip()
                 marca_v = (fila.locator("td[data-label='Marca']").inner_text() or "").strip()
                 fecha_v = (fila.locator("td[data-label='Fecha pago']").inner_text() or "").strip()
-                valor_v = (fila.locator("td[data-label='Valor pago']").inner_text() or "").strip()
+                valor_v = (fila.locator("td[data-label='Valor pago (COP)']").inner_text() or "").strip()
         except Exception:
             pass
         return placa_v, marca_v, fecha_v, valor_v
@@ -670,6 +670,22 @@ def consultar_bello(page, placa):
                 pass
     match_total = re.search(r'Total a pagar:\s*COP\s*([\d.]+)', texto_pagina)
     total = int(match_total.group(1).replace('.', '')) if match_total else sum(r['total_vigencia'] for r in registros)
+
+    # Si no hay vigencias reales con deuda (registros vacío / total 0) pero sí
+    # se logró extraer placa/marca/fecha del último pago, es un paz y salvo
+    # verificado (esto es lo que realmente pasa en Bello 27.1: la página no
+    # muestra el texto "paz y salvo", solo "Vigencias pendientes ()" vacío).
+    if not registros and total == 0 and (placa_ult or marca_ult or fecha_ult):
+        return [{
+            "vigencia":       "PAZ Y SALVO",
+            "estado":         f"Vehículo a paz y salvo en el Tránsito de Bello. Último pago: {fecha_ult}".strip(". "),
+            "total_vigencia": 0,
+            "paz_y_salvo":    True,
+            "fecha_pago":     fecha_ult,
+            "marca":          marca_ult,
+            "placa_info":     placa_ult,
+        }], 0
+
     return registros, total
 
 
