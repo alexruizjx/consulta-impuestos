@@ -664,9 +664,9 @@ def consultar_bello(page, placa):
         return [], 0
 
     registros = []
-    tbodies = page.locator("tbody").all()
-    for tbody in tbodies[::2]:
-        texto = tbody.inner_text().strip()
+    filas_vig = page.locator("#tablaCollapseVigencias tr").all()
+    for fila in filas_vig:
+        texto = fila.inner_text().strip()
         if not texto:
             continue
         año = re.search(r'\b(20\d{2})\b', texto)
