@@ -614,10 +614,39 @@ def consultar_bello(page, placa):
         return [], 0
     page.wait_for_timeout(10000)
     texto_pagina = page.inner_text("body")
+
+    def _extraer_verificacion():
+        """Intenta extraer placa/marca/fecha/valor del último pago para verificar
+        que el sistema consultó el vehículo real (anti falso-positivo)."""
+        placa_v = ""; marca_v = ""; fecha_v = ""; valor_v = ""
+        try:
+            fila = page.locator("#tablaUltimosPagos tbody tr").first
+            if fila.count() > 0:
+                placa_v = (fila.locator("td[data-label='Placa']").inner_text() or "").strip()
+                marca_v = (fila.locator("td[data-label='Marca']").inner_text() or "").strip()
+                fecha_v = (fila.locator("td[data-label='Fecha pago']").inner_text() or "").strip()
+                valor_v = (fila.locator("td[data-label='Valor pago']").inner_text() or "").strip()
+        except Exception:
+            pass
+        return placa_v, marca_v, fecha_v, valor_v
+
     if 'paz y salvo' in texto_pagina or 'No se encontraron registros' in texto_pagina:
+        placa_v, marca_v, fecha_v, _ = _extraer_verificacion()
+        if placa_v or marca_v or fecha_v:
+            return [{
+                "vigencia":       "PAZ Y SALVO",
+                "estado":         f"Vehículo a paz y salvo en el Tránsito de Bello. Último pago: {fecha_v}".strip(". "),
+                "total_vigencia": 0,
+                "paz_y_salvo":    True,
+                "fecha_pago":     fecha_v,
+                "marca":          marca_v,
+                "placa_info":     placa_v,
+            }], 0
         return [], 0
     if 'Vigencias pendientes' not in texto_pagina:
         return [], 0
+
+    placa_ult, marca_ult, fecha_ult, valor_ult = _extraer_verificacion()
     registros = []
     tbodies = page.locator("tbody").all()
     for tbody in tbodies[::2]:
@@ -629,7 +658,14 @@ def consultar_bello(page, placa):
         if año and montos:
             valor_fila = montos[-1].replace('COP', '').replace(' ', '').replace('.', '')
             try:
-                registros.append({'vigencia': año.group(), 'estado': 'Pendiente de pago' if 'Pendiente' in texto else 'Desconocido', 'total_vigencia': int(valor_fila)})
+                registros.append({
+                    'vigencia': año.group(), 'estado': 'Pendiente de pago' if 'Pendiente' in texto else 'Desconocido',
+                    'total_vigencia': int(valor_fila),
+                    'placa_ultimo_pago': placa_ult,
+                    'marca_ultimo_pago': marca_ult,
+                    'fecha_ultimo_pago': fecha_ult,
+                    'valor_ultimo_pago': valor_ult,
+                })
             except ValueError:
                 pass
     match_total = re.search(r'Total a pagar:\s*COP\s*([\d.]+)', texto_pagina)
@@ -1304,7 +1340,7 @@ def consultar():
         # (posible falso positivo: la página no cargó los datos reales del vehículo).
         # Se considera "verificado" cuando trajo placa y/o marca vistas en la página.
         verificado_mun = bool(placa_vista_mun or marca_pago_mun)
-        if total_mun == 0 and not verificado_mun and municipio in ("envigado", "sabaneta", "itagui"):
+        if total_mun == 0 and not verificado_mun and municipio in ("envigado", "sabaneta", "itagui", "bello"):
             resultado2    = {}
             error2        = {}
             funcion_reint = MUNICIPIOS[municipio]
