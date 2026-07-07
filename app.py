@@ -643,10 +643,26 @@ def consultar_bello(page, placa):
                 "placa_info":     placa_v,
             }], 0
         return [], 0
+
+    # La sección "Vigencias pendientes" se oculta con ng-hide (display:none)
+    # cuando NO hay deuda, y Playwright's inner_text() no incluye texto oculto.
+    # Por eso hay que extraer la verificación (tabla de últimos pagos, que SÍ
+    # es visible siempre) ANTES de decidir si hay o no vigencias pendientes.
+    placa_ult, marca_ult, fecha_ult, valor_ult = _extraer_verificacion()
+
     if 'Vigencias pendientes' not in texto_pagina:
+        if placa_ult or marca_ult or fecha_ult:
+            return [{
+                "vigencia":       "PAZ Y SALVO",
+                "estado":         f"Vehículo a paz y salvo en el Tránsito de Bello. Último pago: {fecha_ult}".strip(". "),
+                "total_vigencia": 0,
+                "paz_y_salvo":    True,
+                "fecha_pago":     fecha_ult,
+                "marca":          marca_ult,
+                "placa_info":     placa_ult,
+            }], 0
         return [], 0
 
-    placa_ult, marca_ult, fecha_ult, valor_ult = _extraer_verificacion()
     registros = []
     tbodies = page.locator("tbody").all()
     for tbody in tbodies[::2]:
