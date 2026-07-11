@@ -2234,13 +2234,13 @@ def comparendos_buscar():
         conn = get_db_conn()
         cur = conn.cursor()
         cur.execute("""
-            SELECT codigo, descripcion, valor FROM comparendos_tarifas
+            SELECT codigo, descripcion, valor, valor_desc_50, valor_desc_25 FROM comparendos_tarifas
             WHERE periodo = 2026 AND (codigo ILIKE %s OR descripcion ILIKE %s)
             ORDER BY codigo LIMIT 20
         """, (f"{q}%", f"%{q}%"))
         rows = cur.fetchall()
         cur.close(); conn.close()
-        return jsonify([{"codigo": r[0], "descripcion": r[1], "valor": r[2]} for r in rows])
+        return jsonify([{"codigo": r[0], "descripcion": r[1], "valor": r[2], "valor_desc_50": r[3], "valor_desc_25": r[4]} for r in rows])
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -2253,11 +2253,11 @@ def comparendos_precio():
     try:
         conn = get_db_conn()
         cur = conn.cursor()
-        cur.execute("SELECT descripcion, valor FROM comparendos_tarifas WHERE periodo = 2026 AND codigo = %s", (codigo,))
+        cur.execute("SELECT descripcion, valor, valor_desc_50, valor_desc_25 FROM comparendos_tarifas WHERE periodo = 2026 AND codigo = %s", (codigo,))
         row = cur.fetchone()
         cur.close(); conn.close()
         if row:
-            return jsonify({"codigo": codigo, "descripcion": row[0], "valor": row[1]})
+            return jsonify({"codigo": codigo, "descripcion": row[0], "valor": row[1], "valor_desc_50": row[2], "valor_desc_25": row[3]})
         return jsonify({"error": "No se encontro esa infraccion"}), 404
     except Exception as e:
         return jsonify({"error": str(e)}), 500
