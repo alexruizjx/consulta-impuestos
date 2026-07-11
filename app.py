@@ -2345,16 +2345,6 @@ def ocr_tarjeta():
             media_type = "image/webp"
         if "," in img_data:
             img_data = img_data.split(",")[1]
-        import hashlib
-        hash_imagen = hashlib.sha256(img_data.encode()).hexdigest()
-        conn = get_db_conn()
-        cur = conn.cursor()
-        cur.execute("SELECT placa, marca, linea, modelo, clase, servicio, capacidad, cilindrada, carroceria, tipo_documento, cedula, apellidos, municipio, limitacion_propiedad FROM cache_tarjetas WHERE hash_imagen = %s", (hash_imagen,))
-        row = cur.fetchone()
-        if row:
-            cur.close(); conn.close()
-            return jsonify({"placa": row[0] or "", "marca": row[1] or "", "linea": row[2] or "", "modelo": row[3] or "", "clase": row[4] or "", "servicio": row[5] or "", "capacidad": row[6] or "", "cilindrada": row[7] or "", "carroceria": row[8] or "", "tipo_documento": row[9] or "", "cedula": row[10] or "", "apellidos": row[11] or "", "municipio": row[12] or "", "limitacion_propiedad": row[13] or "", "desde_cache": True})
-        cur.close(); conn.close()
         anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
         if not anthropic_key:
             return jsonify({"error": "API Key de Anthropic no configurada"}), 500
@@ -2398,34 +2388,6 @@ def ocr_tarjeta():
         apellidos            = resultado.get("apellidos", "").upper().strip()
         municipio            = resultado.get("municipio", "").upper().strip()
         limitacion_propiedad = resultado.get("limitacion_propiedad", "").strip()
-        try:
-            # No guardar en cache si la extraccion no encontro nada util —
-            # de lo contrario una lectura fallida puntual (ej: error temporal
-            # de la API, imagen borrosa) quedaria "atascada" para siempre,
-            # sirviendo esa misma respuesta vacia en cada intento futuro.
-            hay_algo_util = bool(placa or marca or cedula or apellidos)
-            if hay_algo_util:
-                conn2 = get_db_conn()
-                cur2  = conn2.cursor()
-                if placa:
-                    cur2.execute("DELETE FROM cache_tarjetas WHERE placa = %s AND hash_imagen != %s", (placa, hash_imagen))
-                cur2.execute("""
-                    INSERT INTO cache_tarjetas (hash_imagen, placa, marca, linea, modelo, clase, servicio, capacidad, cilindrada, tipo_documento, cedula, apellidos, municipio, limitacion_propiedad)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                    ON CONFLICT (hash_imagen) DO UPDATE SET
-                        placa=EXCLUDED.placa, marca=EXCLUDED.marca, linea=EXCLUDED.linea, modelo=EXCLUDED.modelo,
-                        clase=EXCLUDED.clase, servicio=EXCLUDED.servicio, capacidad=EXCLUDED.capacidad,
-                        cilindrada=EXCLUDED.cilindrada, tipo_documento=EXCLUDED.tipo_documento, cedula=EXCLUDED.cedula,
-                        apellidos=EXCLUDED.apellidos,
-                        municipio=CASE WHEN EXCLUDED.municipio != '' THEN EXCLUDED.municipio ELSE cache_tarjetas.municipio END,
-                        limitacion_propiedad=CASE WHEN EXCLUDED.limitacion_propiedad != '' THEN EXCLUDED.limitacion_propiedad ELSE cache_tarjetas.limitacion_propiedad END,
-                        actualizado_en=NOW()
-                """, (hash_imagen, placa, marca, linea, modelo, clase, servicio, capacidad, cilindrada, tipo_documento, cedula, apellidos, municipio, limitacion_propiedad))
-                conn2.commit()
-                cur2.close()
-                conn2.close()
-        except Exception as e_cache:
-            print(f"Error cache tarjeta: {e_cache}")
         return jsonify({"placa": placa, "marca": marca, "linea": linea, "modelo": modelo, "clase": clase, "servicio": servicio, "capacidad": capacidad, "cilindrada": cilindrada, "carroceria": carroceria, "tipo_documento": tipo_documento, "cedula": cedula, "apellidos": apellidos, "municipio": municipio, "limitacion_propiedad": limitacion_propiedad, "desde_cache": False})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
