@@ -2222,6 +2222,47 @@ def tecnomecanica_precio():
         return jsonify({"error": str(e)}), 500
 
 
+# ============ COMPARENDOS ============
+
+@app.route("/comparendos/buscar", methods=["GET"])
+def comparendos_buscar():
+    """Busca por codigo exacto o por palabra clave dentro de la descripcion."""
+    q = request.args.get("q", "").strip()
+    if not q or len(q) < 2:
+        return jsonify([])
+    try:
+        conn = get_db_conn()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT codigo, descripcion, valor FROM comparendos_tarifas
+            WHERE periodo = 2026 AND (codigo ILIKE %s OR descripcion ILIKE %s)
+            ORDER BY codigo LIMIT 20
+        """, (f"{q}%", f"%{q}%"))
+        rows = cur.fetchall()
+        cur.close(); conn.close()
+        return jsonify([{"codigo": r[0], "descripcion": r[1], "valor": r[2]} for r in rows])
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/comparendos/precio", methods=["GET"])
+def comparendos_precio():
+    codigo = request.args.get("codigo", "").strip().upper()
+    if not codigo:
+        return jsonify({"error": "Debes enviar codigo"}), 400
+    try:
+        conn = get_db_conn()
+        cur = conn.cursor()
+        cur.execute("SELECT descripcion, valor FROM comparendos_tarifas WHERE periodo = 2026 AND codigo = %s", (codigo,))
+        row = cur.fetchone()
+        cur.close(); conn.close()
+        if row:
+            return jsonify({"codigo": codigo, "descripcion": row[0], "valor": row[1]})
+        return jsonify({"error": "No se encontro esa infraccion"}), 404
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/reportar", methods=["POST"])
 def reportar():
     try:
