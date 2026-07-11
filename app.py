@@ -2399,25 +2399,31 @@ def ocr_tarjeta():
         municipio            = resultado.get("municipio", "").upper().strip()
         limitacion_propiedad = resultado.get("limitacion_propiedad", "").strip()
         try:
-            conn2 = get_db_conn()
-            cur2  = conn2.cursor()
-            if placa:
-                cur2.execute("DELETE FROM cache_tarjetas WHERE placa = %s AND hash_imagen != %s", (placa, hash_imagen))
-            cur2.execute("""
-                INSERT INTO cache_tarjetas (hash_imagen, placa, marca, linea, modelo, clase, servicio, capacidad, cilindrada, tipo_documento, cedula, apellidos, municipio, limitacion_propiedad)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                ON CONFLICT (hash_imagen) DO UPDATE SET
-                    placa=EXCLUDED.placa, marca=EXCLUDED.marca, linea=EXCLUDED.linea, modelo=EXCLUDED.modelo,
-                    clase=EXCLUDED.clase, servicio=EXCLUDED.servicio, capacidad=EXCLUDED.capacidad,
-                    cilindrada=EXCLUDED.cilindrada, tipo_documento=EXCLUDED.tipo_documento, cedula=EXCLUDED.cedula,
-                    apellidos=EXCLUDED.apellidos,
-                    municipio=CASE WHEN EXCLUDED.municipio != '' THEN EXCLUDED.municipio ELSE cache_tarjetas.municipio END,
-                    limitacion_propiedad=CASE WHEN EXCLUDED.limitacion_propiedad != '' THEN EXCLUDED.limitacion_propiedad ELSE cache_tarjetas.limitacion_propiedad END,
-                    actualizado_en=NOW()
-            """, (hash_imagen, placa, marca, linea, modelo, clase, servicio, capacidad, cilindrada, tipo_documento, cedula, apellidos, municipio, limitacion_propiedad))
-            conn2.commit()
-            cur2.close()
-            conn2.close()
+            # No guardar en cache si la extraccion no encontro nada util —
+            # de lo contrario una lectura fallida puntual (ej: error temporal
+            # de la API, imagen borrosa) quedaria "atascada" para siempre,
+            # sirviendo esa misma respuesta vacia en cada intento futuro.
+            hay_algo_util = bool(placa or marca or cedula or apellidos)
+            if hay_algo_util:
+                conn2 = get_db_conn()
+                cur2  = conn2.cursor()
+                if placa:
+                    cur2.execute("DELETE FROM cache_tarjetas WHERE placa = %s AND hash_imagen != %s", (placa, hash_imagen))
+                cur2.execute("""
+                    INSERT INTO cache_tarjetas (hash_imagen, placa, marca, linea, modelo, clase, servicio, capacidad, cilindrada, tipo_documento, cedula, apellidos, municipio, limitacion_propiedad)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    ON CONFLICT (hash_imagen) DO UPDATE SET
+                        placa=EXCLUDED.placa, marca=EXCLUDED.marca, linea=EXCLUDED.linea, modelo=EXCLUDED.modelo,
+                        clase=EXCLUDED.clase, servicio=EXCLUDED.servicio, capacidad=EXCLUDED.capacidad,
+                        cilindrada=EXCLUDED.cilindrada, tipo_documento=EXCLUDED.tipo_documento, cedula=EXCLUDED.cedula,
+                        apellidos=EXCLUDED.apellidos,
+                        municipio=CASE WHEN EXCLUDED.municipio != '' THEN EXCLUDED.municipio ELSE cache_tarjetas.municipio END,
+                        limitacion_propiedad=CASE WHEN EXCLUDED.limitacion_propiedad != '' THEN EXCLUDED.limitacion_propiedad ELSE cache_tarjetas.limitacion_propiedad END,
+                        actualizado_en=NOW()
+                """, (hash_imagen, placa, marca, linea, modelo, clase, servicio, capacidad, cilindrada, tipo_documento, cedula, apellidos, municipio, limitacion_propiedad))
+                conn2.commit()
+                cur2.close()
+                conn2.close()
         except Exception as e_cache:
             print(f"Error cache tarjeta: {e_cache}")
         return jsonify({"placa": placa, "marca": marca, "linea": linea, "modelo": modelo, "clase": clase, "servicio": servicio, "capacidad": capacidad, "cilindrada": cilindrada, "carroceria": carroceria, "tipo_documento": tipo_documento, "cedula": cedula, "apellidos": apellidos, "municipio": municipio, "limitacion_propiedad": limitacion_propiedad, "desde_cache": False})
