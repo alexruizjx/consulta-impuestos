@@ -2349,11 +2349,11 @@ def ocr_tarjeta():
         hash_imagen = hashlib.sha256(img_data.encode()).hexdigest()
         conn = get_db_conn()
         cur = conn.cursor()
-        cur.execute("SELECT placa, marca, linea, modelo, clase, servicio, capacidad, cilindrada, carroceria, tipo_documento, cedula, apellidos, municipio FROM cache_tarjetas WHERE hash_imagen = %s", (hash_imagen,))
+        cur.execute("SELECT placa, marca, linea, modelo, clase, servicio, capacidad, cilindrada, carroceria, tipo_documento, cedula, apellidos, municipio, limitacion_propiedad FROM cache_tarjetas WHERE hash_imagen = %s", (hash_imagen,))
         row = cur.fetchone()
         if row:
             cur.close(); conn.close()
-            return jsonify({"placa": row[0] or "", "marca": row[1] or "", "linea": row[2] or "", "modelo": row[3] or "", "clase": row[4] or "", "servicio": row[5] or "", "capacidad": row[6] or "", "cilindrada": row[7] or "", "carroceria": row[8] or "", "tipo_documento": row[9] or "", "cedula": row[10] or "", "apellidos": row[11] or "", "municipio": row[12] or "", "desde_cache": True})
+            return jsonify({"placa": row[0] or "", "marca": row[1] or "", "linea": row[2] or "", "modelo": row[3] or "", "clase": row[4] or "", "servicio": row[5] or "", "capacidad": row[6] or "", "cilindrada": row[7] or "", "carroceria": row[8] or "", "tipo_documento": row[9] or "", "cedula": row[10] or "", "apellidos": row[11] or "", "municipio": row[12] or "", "limitacion_propiedad": row[13] or "", "desde_cache": True})
         cur.close(); conn.close()
         anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
         if not anthropic_key:
@@ -2370,7 +2370,7 @@ def ocr_tarjeta():
             headers={"x-api-key": anthropic_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
             json={"model": "claude-opus-4-5", "max_tokens": 600, "messages": [{"role": "user", "content": [
                 contenido_archivo,
-                {"type": "text", "text": "Eres un experto en leer tarjetas de propiedad de vehiculos colombianos. El archivo puede ser una imagen o un PDF (puede tener varias paginas; la informacion relevante normalmente esta en la primera). Puede estar en cualquier orientacion. Analiza TODOS los caracteres con mucho cuidado especialmente los numeros. Extrae: 1. PLACA (exactamente 3 letras + 3 numeros, verifica cada caracter) 2. MARCA del vehiculo 3. LINEA del vehiculo 4. MODELO (anno 4 digitos) 5. CLASE (automovil, motocicleta, campero, camioneta, etc) 6. SERVICIO (particular, publico, oficial) 7. CAPACIDAD (numero de pasajeros o carga) 8. CILINDRADA (numero en cc) 9. TIPO_DOCUMENTO (uno de: C.C, NIT, P.P.T, T.I, R.C - aparece debajo de IDENTIFICACION al lado izquierdo del numero) 10. CEDULA (numero de identificacion, verifica TODOS los digitos uno por uno, no omitas ninguno) 11. APELLIDOS del propietario. Responde SOLO en JSON sin explicaciones: {\"placa\": \"\", \"marca\": \"\", \"linea\": \"\", \"modelo\": \"\", \"clase\": \"\", \"servicio\": \"\", \"capacidad\": \"\", \"cilindrada\": \"\", \"carroceria\": \"\", \"tipo_documento\": \"\", \"cedula\": \"\", \"apellidos\": \"\"}"}
+                {"type": "text", "text": "Eres un experto en leer tarjetas de propiedad de vehiculos colombianos. El archivo puede ser una imagen o un PDF (puede tener varias paginas), y puede incluir SOLO la cara frontal de la tarjeta o AMBAS caras (frontal y trasera). Puede estar en cualquier orientacion. Analiza TODOS los caracteres con mucho cuidado especialmente los numeros. Extrae: 1. PLACA (exactamente 3 letras + 3 numeros, verifica cada caracter) 2. MARCA del vehiculo 3. LINEA del vehiculo 4. MODELO (anno 4 digitos) 5. CLASE (automovil, motocicleta, campero, camioneta, etc) 6. SERVICIO (particular, publico, oficial) 7. CAPACIDAD (numero de pasajeros o carga) 8. CILINDRADA (numero en cc) 9. TIPO_DOCUMENTO (uno de: C.C, NIT, P.P.T, T.I, R.C - aparece debajo de IDENTIFICACION al lado izquierdo del numero) 10. CEDULA (numero de identificacion, verifica TODOS los digitos uno por uno, no omitas ninguno) 11. APELLIDOS del propietario. 12. MUNICIPIO (el municipio de matricula del vehiculo — este dato SOLO aparece en la cara TRASERA de la tarjeta; si la imagen o el PDF solo muestra la cara frontal, deja este campo vacio, NO lo inventes ni lo asumas). 13. LIMITACION_PROPIEDAD (el texto del campo 'Limitacion a la propiedad' — tambien esta SOLO en la cara TRASERA; si no aparece esa cara, deja este campo vacio). Responde SOLO en JSON sin explicaciones: {\"placa\": \"\", \"marca\": \"\", \"linea\": \"\", \"modelo\": \"\", \"clase\": \"\", \"servicio\": \"\", \"capacidad\": \"\", \"cilindrada\": \"\", \"carroceria\": \"\", \"tipo_documento\": \"\", \"cedula\": \"\", \"apellidos\": \"\", \"municipio\": \"\", \"limitacion_propiedad\": \"\"}"}
             ]}]},
             timeout=120
         )
@@ -2384,34 +2384,43 @@ def ocr_tarjeta():
         if not json_match:
             return jsonify({"error": "No se pudo parsear respuesta de Claude"}), 500
         resultado = json_lib.loads(json_match.group())
-        placa          = resultado.get("placa", "").upper().replace(" ", "").replace("-", "")
-        marca          = resultado.get("marca", "").upper().strip()
-        linea          = resultado.get("linea", "").upper().strip()
-        modelo         = resultado.get("modelo", "").strip()
-        clase          = resultado.get("clase", "").upper().strip()
-        servicio       = resultado.get("servicio", "").upper().strip()
-        capacidad      = resultado.get("capacidad", "").strip()
-        cilindrada     = resultado.get("cilindrada", "").strip()
-        carroceria     = resultado.get("carroceria", "").upper().strip()
-        tipo_documento = resultado.get("tipo_documento", "").upper().strip()
-        cedula         = resultado.get("cedula", "").strip()
-        apellidos      = resultado.get("apellidos", "").upper().strip()
+        placa                = resultado.get("placa", "").upper().replace(" ", "").replace("-", "")
+        marca                = resultado.get("marca", "").upper().strip()
+        linea                = resultado.get("linea", "").upper().strip()
+        modelo               = resultado.get("modelo", "").strip()
+        clase                = resultado.get("clase", "").upper().strip()
+        servicio             = resultado.get("servicio", "").upper().strip()
+        capacidad            = resultado.get("capacidad", "").strip()
+        cilindrada           = resultado.get("cilindrada", "").strip()
+        carroceria           = resultado.get("carroceria", "").upper().strip()
+        tipo_documento       = resultado.get("tipo_documento", "").upper().strip()
+        cedula               = resultado.get("cedula", "").strip()
+        apellidos            = resultado.get("apellidos", "").upper().strip()
+        municipio            = resultado.get("municipio", "").upper().strip()
+        limitacion_propiedad = resultado.get("limitacion_propiedad", "").strip()
         try:
             conn2 = get_db_conn()
             cur2  = conn2.cursor()
             if placa:
                 cur2.execute("DELETE FROM cache_tarjetas WHERE placa = %s AND hash_imagen != %s", (placa, hash_imagen))
             cur2.execute("""
-                INSERT INTO cache_tarjetas (hash_imagen, placa, marca, linea, modelo, clase, servicio, capacidad, cilindrada, tipo_documento, cedula, apellidos, municipio)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                ON CONFLICT (hash_imagen) DO UPDATE SET placa=EXCLUDED.placa, marca=EXCLUDED.marca, linea=EXCLUDED.linea, modelo=EXCLUDED.modelo, clase=EXCLUDED.clase, servicio=EXCLUDED.servicio, capacidad=EXCLUDED.capacidad, cilindrada=EXCLUDED.cilindrada, tipo_documento=EXCLUDED.tipo_documento, cedula=EXCLUDED.cedula, apellidos=EXCLUDED.apellidos, actualizado_en=NOW()
-            """, (hash_imagen, placa, marca, linea, modelo, clase, servicio, capacidad, cilindrada, tipo_documento, cedula, apellidos, ""))
+                INSERT INTO cache_tarjetas (hash_imagen, placa, marca, linea, modelo, clase, servicio, capacidad, cilindrada, tipo_documento, cedula, apellidos, municipio, limitacion_propiedad)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                ON CONFLICT (hash_imagen) DO UPDATE SET
+                    placa=EXCLUDED.placa, marca=EXCLUDED.marca, linea=EXCLUDED.linea, modelo=EXCLUDED.modelo,
+                    clase=EXCLUDED.clase, servicio=EXCLUDED.servicio, capacidad=EXCLUDED.capacidad,
+                    cilindrada=EXCLUDED.cilindrada, tipo_documento=EXCLUDED.tipo_documento, cedula=EXCLUDED.cedula,
+                    apellidos=EXCLUDED.apellidos,
+                    municipio=CASE WHEN EXCLUDED.municipio != '' THEN EXCLUDED.municipio ELSE cache_tarjetas.municipio END,
+                    limitacion_propiedad=CASE WHEN EXCLUDED.limitacion_propiedad != '' THEN EXCLUDED.limitacion_propiedad ELSE cache_tarjetas.limitacion_propiedad END,
+                    actualizado_en=NOW()
+            """, (hash_imagen, placa, marca, linea, modelo, clase, servicio, capacidad, cilindrada, tipo_documento, cedula, apellidos, municipio, limitacion_propiedad))
             conn2.commit()
             cur2.close()
             conn2.close()
         except Exception as e_cache:
             print(f"Error cache tarjeta: {e_cache}")
-        return jsonify({"placa": placa, "marca": marca, "linea": linea, "modelo": modelo, "clase": clase, "servicio": servicio, "capacidad": capacidad, "cilindrada": cilindrada, "carroceria": carroceria, "tipo_documento": tipo_documento, "cedula": cedula, "apellidos": apellidos, "municipio": "", "desde_cache": False})
+        return jsonify({"placa": placa, "marca": marca, "linea": linea, "modelo": modelo, "clase": clase, "servicio": servicio, "capacidad": capacidad, "cilindrada": cilindrada, "carroceria": carroceria, "tipo_documento": tipo_documento, "cedula": cedula, "apellidos": apellidos, "municipio": municipio, "limitacion_propiedad": limitacion_propiedad, "desde_cache": False})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
