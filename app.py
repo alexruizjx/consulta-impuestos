@@ -2097,6 +2097,131 @@ def tramites_precio():
         return jsonify({"error": str(e)}), 500
 
 
+# ============ SOAT ============
+
+@app.route("/soat/clases", methods=["GET"])
+def soat_clases():
+    """Devuelve las clases de vehiculo disponibles, en orden de tarifa (1-9)."""
+    try:
+        conn = get_db_conn()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT DISTINCT tarifa, clase_vehiculo FROM soat_tarifas
+            WHERE periodo = 2026 ORDER BY tarifa
+        """)
+        rows = cur.fetchall()
+        cur.close(); conn.close()
+        return jsonify([{"tarifa": r[0], "clase_vehiculo": r[1]} for r in rows])
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/soat/opciones", methods=["GET"])
+def soat_opciones():
+    """Devuelve las descripciones (cilindraje/toneladas/pasajeros) para una clase dada."""
+    clase = request.args.get("clase", "").strip().upper()
+    if not clase:
+        return jsonify({"error": "Debes enviar clase"}), 400
+    try:
+        conn = get_db_conn()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT DISTINCT codigo, descripcion FROM soat_tarifas
+            WHERE periodo = 2026 AND clase_vehiculo = %s ORDER BY codigo
+        """, (clase,))
+        rows = cur.fetchall()
+        cur.close(); conn.close()
+        return jsonify([{"codigo": r[0], "descripcion": r[1]} for r in rows])
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/soat/modelos", methods=["GET"])
+def soat_modelos():
+    """Devuelve los rangos de modelo disponibles (si aplica) para clase+descripcion."""
+    clase       = request.args.get("clase", "").strip().upper()
+    descripcion = request.args.get("descripcion", "").strip()
+    if not clase or not descripcion:
+        return jsonify({"error": "Debes enviar clase y descripcion"}), 400
+    try:
+        conn = get_db_conn()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT DISTINCT codigo, modelo FROM soat_tarifas
+            WHERE periodo = 2026 AND clase_vehiculo = %s AND descripcion = %s
+            ORDER BY codigo
+        """, (clase, descripcion))
+        rows = cur.fetchall()
+        cur.close(); conn.close()
+        return jsonify([{"codigo": r[0], "modelo": r[1]} for r in rows])
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/soat/precio", methods=["GET"])
+def soat_precio():
+    """Precio final. 'codigo' es suficiente si ya se conoce (mas directo),
+    o se puede armar con clase+descripcion+modelo."""
+    codigo = request.args.get("codigo", "").strip()
+    try:
+        conn = get_db_conn()
+        cur = conn.cursor()
+        if codigo:
+            cur.execute("SELECT clase_vehiculo, descripcion, modelo, valor FROM soat_tarifas WHERE periodo=2026 AND codigo=%s", (codigo,))
+        else:
+            clase       = request.args.get("clase", "").strip().upper()
+            descripcion = request.args.get("descripcion", "").strip()
+            modelo      = request.args.get("modelo", "").strip()
+            if not clase:
+                return jsonify({"error": "Debes enviar codigo, o al menos clase"}), 400
+            if descripcion and modelo:
+                cur.execute("SELECT clase_vehiculo, descripcion, modelo, valor FROM soat_tarifas WHERE periodo=2026 AND clase_vehiculo=%s AND descripcion=%s AND modelo=%s", (clase, descripcion, modelo))
+            elif descripcion:
+                cur.execute("SELECT clase_vehiculo, descripcion, modelo, valor FROM soat_tarifas WHERE periodo=2026 AND clase_vehiculo=%s AND descripcion=%s", (clase, descripcion))
+            else:
+                cur.execute("SELECT clase_vehiculo, descripcion, modelo, valor FROM soat_tarifas WHERE periodo=2026 AND clase_vehiculo=%s", (clase,))
+        row = cur.fetchone()
+        cur.close(); conn.close()
+        if row:
+            return jsonify({"clase_vehiculo": row[0], "descripcion": row[1], "modelo": row[2], "valor": row[3]})
+        return jsonify({"error": "No se encontro tarifa SOAT para esos criterios"}), 404
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ============ TECNOMECANICA ============
+
+@app.route("/tecnomecanica/categorias", methods=["GET"])
+def tecnomecanica_categorias():
+    try:
+        conn = get_db_conn()
+        cur = conn.cursor()
+        cur.execute("SELECT categoria, valor FROM tecnomecanica_tarifas WHERE periodo = 2026 ORDER BY id")
+        rows = cur.fetchall()
+        cur.close(); conn.close()
+        return jsonify([{"categoria": r[0], "valor": r[1]} for r in rows])
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/tecnomecanica/precio", methods=["GET"])
+def tecnomecanica_precio():
+    categoria = request.args.get("categoria", "").strip()
+    if not categoria:
+        return jsonify({"error": "Debes enviar categoria"}), 400
+    try:
+        conn = get_db_conn()
+        cur = conn.cursor()
+        cur.execute("SELECT valor FROM tecnomecanica_tarifas WHERE periodo = 2026 AND categoria = %s", (categoria,))
+        row = cur.fetchone()
+        cur.close(); conn.close()
+        if row:
+            return jsonify({"categoria": categoria, "valor": row[0]})
+        return jsonify({"error": "No se encontro esa categoria"}), 404
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/reportar", methods=["POST"])
 def reportar():
     try:
