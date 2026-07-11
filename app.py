@@ -2335,8 +2335,11 @@ def ocr_tarjeta():
         if not data or "imagen" not in data:
             return jsonify({"error": "No se recibio imagen"}), 400
         img_data   = data["imagen"]
+        es_pdf     = "data:application/pdf" in img_data
         media_type = "image/jpeg"
-        if "data:image/png" in img_data:
+        if es_pdf:
+            media_type = "application/pdf"
+        elif "data:image/png" in img_data:
             media_type = "image/png"
         elif "data:image/webp" in img_data:
             media_type = "image/webp"
@@ -2355,12 +2358,19 @@ def ocr_tarjeta():
         anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
         if not anthropic_key:
             return jsonify({"error": "API Key de Anthropic no configurada"}), 500
+        # PDFs se envian como "document", imagenes como "image" — Claude soporta
+        # ambos de forma nativa en su API de mensajes.
+        contenido_archivo = (
+            {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": img_data}}
+            if es_pdf else
+            {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": img_data}}
+        )
         response = requests.post(
             "https://api.anthropic.com/v1/messages",
             headers={"x-api-key": anthropic_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
             json={"model": "claude-opus-4-5", "max_tokens": 600, "messages": [{"role": "user", "content": [
-                {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": img_data}},
-                {"type": "text", "text": "Eres un experto en leer tarjetas de propiedad de vehiculos colombianos. La imagen puede estar en cualquier orientacion. Analiza TODOS los caracteres con mucho cuidado especialmente los numeros. Extrae: 1. PLACA (exactamente 3 letras + 3 numeros, verifica cada caracter) 2. MARCA del vehiculo 3. LINEA del vehiculo 4. MODELO (anno 4 digitos) 5. CLASE (automovil, motocicleta, campero, camioneta, etc) 6. SERVICIO (particular, publico, oficial) 7. CAPACIDAD (numero de pasajeros o carga) 8. CILINDRADA (numero en cc) 9. TIPO_DOCUMENTO (uno de: C.C, NIT, P.P.T, T.I, R.C - aparece debajo de IDENTIFICACION al lado izquierdo del numero) 10. CEDULA (numero de identificacion, verifica TODOS los digitos uno por uno, no omitas ninguno) 11. APELLIDOS del propietario. Responde SOLO en JSON sin explicaciones: {\"placa\": \"\", \"marca\": \"\", \"linea\": \"\", \"modelo\": \"\", \"clase\": \"\", \"servicio\": \"\", \"capacidad\": \"\", \"cilindrada\": \"\", \"carroceria\": \"\", \"tipo_documento\": \"\", \"cedula\": \"\", \"apellidos\": \"\"}"}
+                contenido_archivo,
+                {"type": "text", "text": "Eres un experto en leer tarjetas de propiedad de vehiculos colombianos. El archivo puede ser una imagen o un PDF (puede tener varias paginas; la informacion relevante normalmente esta en la primera). Puede estar en cualquier orientacion. Analiza TODOS los caracteres con mucho cuidado especialmente los numeros. Extrae: 1. PLACA (exactamente 3 letras + 3 numeros, verifica cada caracter) 2. MARCA del vehiculo 3. LINEA del vehiculo 4. MODELO (anno 4 digitos) 5. CLASE (automovil, motocicleta, campero, camioneta, etc) 6. SERVICIO (particular, publico, oficial) 7. CAPACIDAD (numero de pasajeros o carga) 8. CILINDRADA (numero en cc) 9. TIPO_DOCUMENTO (uno de: C.C, NIT, P.P.T, T.I, R.C - aparece debajo de IDENTIFICACION al lado izquierdo del numero) 10. CEDULA (numero de identificacion, verifica TODOS los digitos uno por uno, no omitas ninguno) 11. APELLIDOS del propietario. Responde SOLO en JSON sin explicaciones: {\"placa\": \"\", \"marca\": \"\", \"linea\": \"\", \"modelo\": \"\", \"clase\": \"\", \"servicio\": \"\", \"capacidad\": \"\", \"cilindrada\": \"\", \"carroceria\": \"\", \"tipo_documento\": \"\", \"cedula\": \"\", \"apellidos\": \"\"}"}
             ]}]},
             timeout=120
         )
