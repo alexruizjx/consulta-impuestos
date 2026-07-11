@@ -2334,33 +2334,37 @@ def ocr_tarjeta():
         data = request.get_json()
         if not data or "imagen" not in data:
             return jsonify({"error": "No se recibio imagen"}), 400
-        img_data   = data["imagen"]
-        es_pdf     = "data:application/pdf" in img_data
-        media_type = "image/jpeg"
-        if es_pdf:
-            media_type = "application/pdf"
-        elif "data:image/png" in img_data:
-            media_type = "image/png"
-        elif "data:image/webp" in img_data:
-            media_type = "image/webp"
-        if "," in img_data:
-            img_data = img_data.split(",")[1]
+
+        def preparar_archivo(img_data):
+            es_pdf = "data:application/pdf" in img_data
+            media_type = "application/pdf" if es_pdf else "image/jpeg"
+            if not es_pdf:
+                if "data:image/png" in img_data:
+                    media_type = "image/png"
+                elif "data:image/webp" in img_data:
+                    media_type = "image/webp"
+            if "," in img_data:
+                img_data = img_data.split(",")[1]
+            if es_pdf:
+                return {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": img_data}}
+            return {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": img_data}}
+
+        # Puede venir un solo archivo (imagen o PDF con ambas caras), o dos
+        # archivos separados (ej: foto de la cara frontal + foto de la cara
+        # trasera, subidas por separado). Ambos se envian juntos a Claude.
+        archivos_content = [preparar_archivo(data["imagen"])]
+        if data.get("imagen2"):
+            archivos_content.append(preparar_archivo(data["imagen2"]))
+
         anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
         if not anthropic_key:
             return jsonify({"error": "API Key de Anthropic no configurada"}), 500
-        # PDFs se envian como "document", imagenes como "image" — Claude soporta
-        # ambos de forma nativa en su API de mensajes.
-        contenido_archivo = (
-            {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": img_data}}
-            if es_pdf else
-            {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": img_data}}
-        )
+
         response = requests.post(
             "https://api.anthropic.com/v1/messages",
             headers={"x-api-key": anthropic_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
-            json={"model": "claude-opus-4-5", "max_tokens": 600, "messages": [{"role": "user", "content": [
-                contenido_archivo,
-                {"type": "text", "text": "Eres un experto en leer tarjetas/licencias de tránsito de vehiculos colombianos. El archivo puede ser una imagen o un PDF (puede tener varias paginas), y puede incluir SOLO la cara frontal, SOLO la cara trasera, o AMBAS caras. El archivo puede estar rotado o de lado (esto es MUY comun en fotos, especialmente de la cara trasera) — gira mentalmente el texto para leerlo sin importar su orientacion. Analiza TODOS los caracteres con mucho cuidado especialmente los numeros. Extrae: 1. PLACA (exactamente 3 letras + 3 numeros, verifica cada caracter) 2. MARCA del vehiculo 3. LINEA del vehiculo 4. MODELO (anno 4 digitos) 5. CLASE (automovil, motocicleta, campero, camioneta, etc) 6. SERVICIO (particular, publico, oficial) 7. CAPACIDAD (numero de pasajeros o carga) 8. CILINDRADA (numero en cc) 9. TIPO_DOCUMENTO (uno de: C.C, NIT, P.P.T, T.I, R.C - aparece debajo de IDENTIFICACION al lado izquierdo del numero) 10. CEDULA (numero de identificacion, verifica TODOS los digitos uno por uno, no omitas ninguno) 11. APELLIDOS del propietario. 12. MUNICIPIO: este dato SOLO aparece en la cara TRASERA, en el campo 'ORGANISMO DE TRANSITO'. Ese campo casi siempre viene ABREVIADO de forma variable, por ejemplo 'STRIA TTEYTTO ENVIGADO' o 'STRIA DE TTOYTTE MEDELLIN' — ambos significan 'Secretaria de Transito y Transporte de <MUNICIPIO>'. El patron general es: unas siglas abreviadas de 'Secretaria de Transito y Transporte' seguidas del NOMBRE DEL MUNICIPIO al final del texto. Extrae SOLAMENTE el nombre del municipio (la ultima palabra o palabras), sin ninguna de las siglas ni abreviaturas que la preceden. Si la cara trasera no esta visible en el archivo, deja este campo vacio, NO lo inventes ni lo asumas. 13. LIMITACION_PROPIEDAD: este dato tambien esta SOLO en la cara TRASERA, en el campo literalmente llamado 'LIMITACION A LA PROPIEDAD'. Su valor tipicamente es 'NINGUNA' o algo como 'PRENDA - NOMBRE DE LA ENTIDAD' (ej: 'PRENDA - BANCO DE OCCIDENTE'). Copia el valor completo tal cual aparece. Si la cara trasera no esta visible, deja este campo vacio. Responde SOLO en JSON sin explicaciones: {\"placa\": \"\", \"marca\": \"\", \"linea\": \"\", \"modelo\": \"\", \"clase\": \"\", \"servicio\": \"\", \"capacidad\": \"\", \"cilindrada\": \"\", \"carroceria\": \"\", \"tipo_documento\": \"\", \"cedula\": \"\", \"apellidos\": \"\", \"municipio\": \"\", \"limitacion_propiedad\": \"\"}"}
+            json={"model": "claude-opus-4-5", "max_tokens": 600, "messages": [{"role": "user", "content": archivos_content + [
+                {"type": "text", "text": "Eres un experto en leer tarjetas/licencias de tránsito de vehiculos colombianos. Puedes recibir UNO o DOS archivos (imagenes y/o PDFs): si recibes dos, son la cara frontal y la cara trasera de la MISMA tarjeta, subidas por separado — analiza ambos como si fueran las dos caras de un mismo documento. Cada archivo puede incluir SOLO la cara frontal, SOLO la cara trasera, o AMBAS caras. Los archivos pueden estar rotados o de lado (esto es MUY comun en fotos, especialmente de la cara trasera) — gira mentalmente el texto para leerlo sin importar su orientacion. Analiza TODOS los caracteres con mucho cuidado especialmente los numeros. Extrae: 1. PLACA (exactamente 3 letras + 3 numeros, verifica cada caracter) 2. MARCA del vehiculo 3. LINEA del vehiculo 4. MODELO (anno 4 digitos) 5. CLASE (automovil, motocicleta, campero, camioneta, etc) 6. SERVICIO (particular, publico, oficial) 7. CAPACIDAD (numero de pasajeros o carga) 8. CILINDRADA (numero en cc) 9. TIPO_DOCUMENTO (uno de: C.C, NIT, P.P.T, T.I, R.C - aparece debajo de IDENTIFICACION al lado izquierdo del numero) 10. CEDULA (numero de identificacion, verifica TODOS los digitos uno por uno, no omitas ninguno) 11. APELLIDOS del propietario. 12. MUNICIPIO: este dato SOLO aparece en la cara TRASERA, en el campo 'ORGANISMO DE TRANSITO'. Ese campo casi siempre viene ABREVIADO de forma variable, por ejemplo 'STRIA TTEYTTO ENVIGADO' o 'STRIA DE TTOYTTE MEDELLIN' — ambos significan 'Secretaria de Transito y Transporte de <MUNICIPIO>'. El patron general es: unas siglas abreviadas de 'Secretaria de Transito y Transporte' seguidas del NOMBRE DEL MUNICIPIO al final del texto. Extrae SOLAMENTE el nombre del municipio (la ultima palabra o palabras), sin ninguna de las siglas ni abreviaturas que la preceden. Si la cara trasera no esta visible en ninguno de los archivos, deja este campo vacio, NO lo inventes ni lo asumas. 13. LIMITACION_PROPIEDAD: este dato tambien esta SOLO en la cara TRASERA, en el campo literalmente llamado 'LIMITACION A LA PROPIEDAD'. Su valor tipicamente es 'NINGUNA' o algo como 'PRENDA - NOMBRE DE LA ENTIDAD' (ej: 'PRENDA - BANCO DE OCCIDENTE'). Copia el valor completo tal cual aparece. Si la cara trasera no esta visible en ninguno de los archivos, deja este campo vacio. Responde SOLO en JSON sin explicaciones: {\"placa\": \"\", \"marca\": \"\", \"linea\": \"\", \"modelo\": \"\", \"clase\": \"\", \"servicio\": \"\", \"capacidad\": \"\", \"cilindrada\": \"\", \"carroceria\": \"\", \"tipo_documento\": \"\", \"cedula\": \"\", \"apellidos\": \"\", \"municipio\": \"\", \"limitacion_propiedad\": \"\"}"}
             ]}]},
             timeout=120
         )
