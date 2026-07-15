@@ -2397,6 +2397,83 @@ def ocr_tarjeta():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/ocr-runt-texto", methods=["POST"])
+def ocr_runt_texto():
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No se recibieron datos"}), 400
+        texto_placa  = (data.get("texto_placa") or "").strip()
+        texto_cedula = (data.get("texto_cedula") or "").strip()
+        if not texto_placa and not texto_cedula:
+            return jsonify({"error": "Debes pegar al menos un texto"}), 400
+
+        anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
+        if not anthropic_key:
+            return jsonify({"error": "API Key de Anthropic no configurada"}), 500
+
+        texto_combinado = ""
+        if texto_placa:
+            texto_combinado += "=== TEXTO COPIADO DEL RUNT — CONSULTA POR PLACA (datos del VEHICULO) ===\n" + texto_placa + "\n\n"
+        if texto_cedula:
+            texto_combinado += "=== TEXTO COPIADO DEL RUNT — CONSULTA POR CEDULA (datos del PROPIETARIO/CONDUCTOR) ===\n" + texto_cedula
+
+        prompt = (
+            "Eres un experto en interpretar texto copiado y pegado directamente del portal RUNT "
+            "(Registro Unico Nacional de Transito de Colombia). Te voy a dar el texto plano que un "
+            "usuario copio de la pagina de resultados del RUNT — puede ser de una consulta por PLACA "
+            "(trae datos del vehiculo), por CEDULA (trae datos del propietario/conductor), o ambas. "
+            "El texto puede venir desordenado, con saltos de linea irregulares, o con texto de menus/"
+            "botones de la pagina mezclado — ignora ese ruido y concentrate en los datos reales. "
+            "Extrae los siguientes datos si estan presentes en cualquiera de los dos textos: "
+            "1. PLACA 2. MARCA 3. LINEA 4. MODELO (año) 5. CLASE 6. SERVICIO 7. CAPACIDAD "
+            "8. CILINDRADA (cc) 9. TIPO_DOCUMENTO (C.C, NIT, C.E, T.I, R.C, P.P.T) "
+            "10. CEDULA (numero de identificacion del propietario) 11. APELLIDOS (y nombres) del "
+            "propietario 12. MUNICIPIO (municipio u organismo de transito donde esta matriculado el "
+            "vehiculo) 13. LIMITACION_PROPIEDAD (gravamenes, prenda a favor de alguna entidad, o "
+            "'NINGUNA' si no tiene). Si un dato no aparece en el texto, deja ese campo vacio, NO lo "
+            "inventes ni lo asumas. Responde SOLO en JSON sin explicaciones: "
+            "{\"placa\": \"\", \"marca\": \"\", \"linea\": \"\", \"modelo\": \"\", \"clase\": \"\", "
+            "\"servicio\": \"\", \"capacidad\": \"\", \"cilindrada\": \"\", \"carroceria\": \"\", "
+            "\"tipo_documento\": \"\", \"cedula\": \"\", \"apellidos\": \"\", \"municipio\": \"\", "
+            "\"limitacion_propiedad\": \"\"}\n\nTEXTO A ANALIZAR:\n" + texto_combinado
+        )
+
+        response = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={"x-api-key": anthropic_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
+            json={"model": "claude-opus-4-5", "max_tokens": 600, "messages": [{"role": "user", "content": prompt}]},
+            timeout=90
+        )
+        if response.status_code != 200:
+            return jsonify({"error": f"Error Claude API: {response.status_code}"}), 500
+        resp_data = response.json()
+        texto_resp = resp_data["content"][0]["text"].strip()
+        import json as json_lib, re as re_module
+        texto_clean = texto_resp.replace("```json", "").replace("```", "").strip()
+        json_match = re_module.search(r'\{[^{}]*\}', texto_clean, re_module.DOTALL)
+        if not json_match:
+            return jsonify({"error": "No se pudo parsear respuesta"}), 500
+        resultado = json_lib.loads(json_match.group())
+        placa                = resultado.get("placa", "").upper().replace(" ", "").replace("-", "")
+        marca                = resultado.get("marca", "").upper().strip()
+        linea                = resultado.get("linea", "").upper().strip()
+        modelo               = resultado.get("modelo", "").strip()
+        clase                = resultado.get("clase", "").upper().strip()
+        servicio             = resultado.get("servicio", "").upper().strip()
+        capacidad            = resultado.get("capacidad", "").strip()
+        cilindrada           = resultado.get("cilindrada", "").strip()
+        carroceria           = resultado.get("carroceria", "").upper().strip()
+        tipo_documento       = resultado.get("tipo_documento", "").upper().strip()
+        cedula               = resultado.get("cedula", "").strip()
+        apellidos            = resultado.get("apellidos", "").upper().strip()
+        municipio            = resultado.get("municipio", "").upper().strip()
+        limitacion_propiedad = resultado.get("limitacion_propiedad", "").strip()
+        return jsonify({"placa": placa, "marca": marca, "linea": linea, "modelo": modelo, "clase": clase, "servicio": servicio, "capacidad": capacidad, "cilindrada": cilindrada, "carroceria": carroceria, "tipo_documento": tipo_documento, "cedula": cedula, "apellidos": apellidos, "municipio": municipio, "limitacion_propiedad": limitacion_propiedad})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/ocr-guardar-municipio", methods=["POST"])
 def ocr_guardar_municipio():
     try:
