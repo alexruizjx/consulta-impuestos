@@ -2075,6 +2075,7 @@ def consultar_runt_vehiculo_endpoint():
                 return
 
             guardar_vehiculo_runt(datos)
+            datos["leido_en"] = datetime.now().strftime("%Y-%m-%d %H:%M")
             job_terminar(job_id, datos)
         except Exception as e:
             import traceback
