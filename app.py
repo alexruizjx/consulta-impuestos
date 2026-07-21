@@ -457,20 +457,20 @@ def _extraer_tarjetas_runt(page):
     """Lee directamente el HTML (no el texto visual) de cada <mat-card> de
     la pagina de resultados, devolviendo un diccionario {etiqueta: valor}
     por cada tarjeta. Esto es inmune a que el CSS reordene visualmente las
-    etiquetas y los valores (que es justo lo que rompia la extraccion por
-    texto plano: en algunas secciones el navegador pinta primero todas las
-    etiquetas y luego todos los valores, aunque en el HTML esten
-    correctamente emparejados)."""
+    etiquetas y los valores. Revisa tanto <p> como <div> como contenedor,
+    y tanto <strong> como <b> como marcador de etiqueta, porque el RUNT usa
+    una combinacion distinta segun la seccion (Info General usa <p><strong>,
+    Datos Tecnicos usa <p><b>, RTM usa <div><strong>)."""
     return page.evaluate("""
         () => {
             const tarjetas = [];
             document.querySelectorAll('mat-card').forEach(card => {
                 const campos = {};
-                card.querySelectorAll('p').forEach(p => {
-                    const strong = p.querySelector('strong');
-                    if (strong) {
-                        const label = strong.innerText.replace(/:\\s*$/, '').trim();
-                        const value = p.innerText.slice(strong.innerText.length).trim();
+                card.querySelectorAll('p, div').forEach(el => {
+                    const marcador = el.querySelector(':scope > strong, :scope > b');
+                    if (marcador) {
+                        const label = marcador.innerText.replace(/:\\s*$/, '').trim();
+                        const value = el.innerText.slice(marcador.innerText.length).trim();
                         if (label) campos[label] = value;
                     }
                 });
@@ -491,27 +491,38 @@ def _extraer_tarjetas_runt(page):
     """)
 
 
-def _extraer_placa_runt(page):
+def _extraer_resumen_runt(page):
+    """La franja superior (placa, estado del vehiculo, tipo de servicio,
+    clase de vehiculo) no vive dentro de ninguna <mat-card> -- son pares de
+    <label>Etiqueta:</label> y <b>Valor</b> como hermanos dentro de un
+    mismo '.row'. Se emparejan por posicion dentro de cada fila."""
     return page.evaluate("""
         () => {
-            const labels = Array.from(document.querySelectorAll('label'));
-            const lbl = labels.find(l => l.innerText.includes('PLACA DEL VEH'));
-            if (!lbl) return '';
-            const fila = lbl.closest('.row');
-            if (!fila) return '';
-            const b = fila.querySelector('b');
-            return b ? b.innerText.trim() : '';
+            const resumen = {};
+            document.querySelectorAll('.row').forEach(row => {
+                const labels = Array.from(row.querySelectorAll(':scope > div > label'));
+                const valores = Array.from(row.querySelectorAll(':scope > div.show-grande > b'));
+                if (labels.length > 0 && labels.length === valores.length) {
+                    labels.forEach((lab, i) => {
+                        const key = lab.innerText.replace(/:\\s*$/, '').trim();
+                        resumen[key] = valores[i].innerText.trim();
+                    });
+                }
+            });
+            return resumen;
         }
-    """) or ""
+    """) or {}
 
 
 def _parsear_resultado_runt_vehiculo(page):
     tarjetas = _extraer_tarjetas_runt(page)
+    resumen = _extraer_resumen_runt(page)
 
     # Las tarjetas de un solo campo (la info general del vehiculo -- marca,
     # modelo, etc. -- cada una vive en su propia <mat-card>) se combinan en
-    # un solo diccionario plano para leerlas facil.
-    plano = {}
+    # un solo diccionario plano para leerlas facil. La franja superior
+    # (placa, servicio, clase, estado) se agrega tambien aqui.
+    plano = dict(resumen)
     for t in tarjetas:
         claves = [k for k in t if k != "_titulo"]
         if len(claves) == 1:
@@ -595,31 +606,11 @@ def _parsear_resultado_runt_vehiculo(page):
             datos[prefijo + "entidad_nit"] = t.get("Identificación Entidad", "").replace("NIT", "").strip()
             datos[prefijo + "fecha"] = _convertir_fecha_ddmmyyyy(t.get("Fecha de Registro", ""))
 
-    datos["placa"] = _extraer_placa_runt(page).upper()
+    datos["placa"] = campo("PLACA DEL VEHÍCULO").upper()
 
     # --- DIAGNOSTICO TEMPORAL (quitar despues de confirmar que funciona) ---
-    datos["_debug_num_tarjetas"] = len(tarjetas)
-    datos["_debug_tarjetas_soat"] = [t for t in tarjetas if "Número de póliza" in t]
-    datos["_debug_tarjetas_prenda"] = [t for t in tarjetas if "ID Prenda" in t]
-    datos["_debug_url_actual"] = page.url
-    datos["_debug_conteos"] = page.evaluate("""
-        () => ({
-            mat_card: document.querySelectorAll('mat-card').length,
-            mat_card_content: document.querySelectorAll('mat-card-content').length,
-            p_tags: document.querySelectorAll('p').length,
-            strong_tags: document.querySelectorAll('strong').length,
-            div_col12: document.querySelectorAll('div.col-12').length,
-            mat_expansion_panel: document.querySelectorAll('mat-expansion-panel').length,
-            body_text_length: document.body.innerText.length,
-        })
-    """)
-    datos["_debug_html_soat"] = page.evaluate("""
-        () => {
-            const contents = Array.from(document.querySelectorAll('mat-card-content'));
-            const soatContent = contents.find(c => c.innerText.includes('SOAT'));
-            return soatContent ? soatContent.outerHTML.slice(0, 2500) : 'NO_ENCONTRADO';
-        }
-    """)
+    datos["_debug_tarjeta_rtm"] = [t for t in tarjetas if "revision tecnico" in t.get("_titulo", "").lower()]
+    datos["_debug_tarjeta_datos_tecnicos"] = [t for t in tarjetas if "Capacidad de Carga" in t]
     # --- FIN DIAGNOSTICO TEMPORAL ---
 
     return datos
