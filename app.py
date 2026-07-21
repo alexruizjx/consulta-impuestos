@@ -444,13 +444,7 @@ def consultar_runt_vehiculo(page, placa, cedula, tipo_documento="CC", job_id=Non
     if job_id:
         job_actualizar(job_id, "Extrayendo datos...", "procesando")
 
-    total_paneles = len(page.query_selector_all('mat-expansion-panel-header'))
-    paneles_aun_colapsados = len(page.query_selector_all('mat-expansion-panel-header[aria-expanded="false"]'))
-
-    datos = _parsear_resultado_runt_vehiculo(page)
-    datos["_debug_total_paneles"] = total_paneles
-    datos["_debug_paneles_aun_colapsados"] = paneles_aun_colapsados
-    return datos
+    return _parsear_resultado_runt_vehiculo(page)
 
 
 def _extraer_tarjetas_runt(page):
@@ -531,8 +525,10 @@ def _parsear_resultado_runt_vehiculo(page):
             if k != "_titulo":
                 plano[k] = v
 
+    plano_lower = {k.lower(): v for k, v in plano.items()}
+
     def campo(nombre):
-        return plano.get(nombre, "")
+        return plano_lower.get(nombre.lower(), "")
 
     datos = {
         "marca": campo("Marca"),
@@ -610,12 +606,6 @@ def _parsear_resultado_runt_vehiculo(page):
             datos[prefijo + "fecha"] = _convertir_fecha_ddmmyyyy(t.get("Fecha de Registro", ""))
 
     datos["placa"] = campo("PLACA DEL VEHÍCULO").upper()
-
-    # --- DIAGNOSTICO TEMPORAL (quitar despues de confirmar que funciona) ---
-    datos["_debug_tarjeta_rtm"] = [t for t in tarjetas if "revision tecnico" in t.get("_titulo", "").lower()]
-    datos["_debug_tarjeta_datos_tecnicos"] = [t for t in tarjetas if "Capacidad de Carga" in t]
-    datos["_debug_resumen"] = resumen
-    # --- FIN DIAGNOSTICO TEMPORAL ---
 
     return datos
 
