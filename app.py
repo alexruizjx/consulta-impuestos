@@ -601,6 +601,18 @@ def _parsear_resultado_runt_vehiculo(page):
     datos["_debug_num_tarjetas"] = len(tarjetas)
     datos["_debug_tarjetas_soat"] = [t for t in tarjetas if "Número de póliza" in t]
     datos["_debug_tarjetas_prenda"] = [t for t in tarjetas if "ID Prenda" in t]
+    datos["_debug_url_actual"] = page.url
+    datos["_debug_conteos"] = page.evaluate("""
+        () => ({
+            mat_card: document.querySelectorAll('mat-card').length,
+            mat_card_content: document.querySelectorAll('mat-card-content').length,
+            p_tags: document.querySelectorAll('p').length,
+            strong_tags: document.querySelectorAll('strong').length,
+            div_col12: document.querySelectorAll('div.col-12').length,
+            mat_expansion_panel: document.querySelectorAll('mat-expansion-panel').length,
+            body_text_length: document.body.innerText.length,
+        })
+    """)
     # --- FIN DIAGNOSTICO TEMPORAL ---
 
     return datos
