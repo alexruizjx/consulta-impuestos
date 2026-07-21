@@ -613,6 +613,13 @@ def _parsear_resultado_runt_vehiculo(page):
             body_text_length: document.body.innerText.length,
         })
     """)
+    datos["_debug_html_soat"] = page.evaluate("""
+        () => {
+            const contents = Array.from(document.querySelectorAll('mat-card-content'));
+            const soatContent = contents.find(c => c.innerText.includes('SOAT'));
+            return soatContent ? soatContent.outerHTML.slice(0, 2500) : 'NO_ENCONTRADO';
+        }
+    """)
     # --- FIN DIAGNOSTICO TEMPORAL ---
 
     return datos
