@@ -2077,7 +2077,10 @@ def consultar_runt_vehiculo_endpoint():
                     "--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu",
                     "--single-process", "--no-zygote", "--disable-setuid-sandbox"
                 ])
-                context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                context = browser.new_context(
+                    user_agent="Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+                    viewport={"width": 390, "height": 844},
+                )
                 page = context.new_page()
                 datos = consultar_runt_vehiculo(page, placa, cedula, tipo_documento, job_id=job_id)
                 context.close(); browser.close()
