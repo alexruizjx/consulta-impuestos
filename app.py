@@ -422,10 +422,20 @@ def consultar_runt_vehiculo(page, placa, cedula, tipo_documento="CC", job_id=Non
 def _texto_tras_label(texto_completo, etiqueta):
     """Busca 'Etiqueta: valor' dentro de un bloque de texto plano (asi es
     como se extraen los datos, ya que el RUNT no usa IDs limpios por campo,
-    solo <strong>Etiqueta:</strong> valor dentro de tarjetas)."""
-    patron = re.escape(etiqueta) + r"\s*:?\s*\n?\s*([^\n]*)"
+    solo <strong>Etiqueta:</strong> valor dentro de tarjetas).
+    Exige el ':' (si no, frases sueltas que casualmente contienen el texto
+    de la etiqueta -- como el aviso legal de la parte superior -- generan
+    falsos positivos). Si lo capturado a su vez contiene ':', es señal de
+    que el campo real estaba vacio y se "comio" la siguiente etiqueta --
+    en ese caso se trata como vacio en vez de devolver basura."""
+    patron = re.escape(etiqueta) + r"\s*:\s*\n?\s*([^\n]*)"
     m = re.search(patron, texto_completo, re.IGNORECASE)
-    return m.group(1).strip() if m else ""
+    if not m:
+        return ""
+    valor = m.group(1).strip()
+    if ":" in valor:
+        return ""
+    return valor
 
 
 def _parsear_resultado_runt_vehiculo(page):
