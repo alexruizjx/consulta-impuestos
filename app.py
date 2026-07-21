@@ -413,6 +413,24 @@ def consultar_runt_vehiculo(page, placa, cedula, tipo_documento="CC", job_id=Non
 
         break
 
+    # Los resultados vienen en varios paneles desplegables (Datos Tecnicos,
+    # SOAT, RTM, Solicitudes, Garantias, etc.) -- solo el bloque principal
+    # de informacion general viene expandido por defecto. Hay que desplegar
+    # el resto o su texto queda oculto y no se puede leer.
+    if job_id:
+        job_actualizar(job_id, "Desplegando secciones del resultado...", "procesando")
+
+    for _ in range(3):  # unas cuantas pasadas, por si desplegar uno revela otros
+        headers_colapsados = page.query_selector_all('mat-expansion-panel-header[aria-expanded="false"]')
+        if not headers_colapsados:
+            break
+        for header in headers_colapsados:
+            try:
+                header.click()
+                page.wait_for_timeout(250)
+            except Exception:
+                pass
+
     if job_id:
         job_actualizar(job_id, "Extrayendo datos...", "procesando")
 
