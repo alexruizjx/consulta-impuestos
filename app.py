@@ -518,15 +518,18 @@ def _parsear_resultado_runt_vehiculo(page):
     tarjetas = _extraer_tarjetas_runt(page)
     resumen = _extraer_resumen_runt(page)
 
-    # Las tarjetas de un solo campo (la info general del vehiculo -- marca,
-    # modelo, etc. -- cada una vive en su propia <mat-card>) se combinan en
-    # un solo diccionario plano para leerlas facil. La franja superior
-    # (placa, servicio, clase, estado) se agrega tambien aqui.
+    # Se combinan todos los campos de todas las tarjetas en un diccionario
+    # plano para leerlos facil. Algunas tarjetas (Info General) tienen un
+    # solo campo cada una; otras (Datos Tecnicos) traen varios campos juntos
+    # en una sola tarjeta. Las tarjetas que se repiten (SOAT, RTM, cada
+    # poliza historica) tambien quedan aqui, pero no importa que se
+    # sobreescriban entre si porque esos campos se leen aparte, directo de
+    # la lista `tarjetas`, no de este diccionario plano.
     plano = dict(resumen)
     for t in tarjetas:
-        claves = [k for k in t if k != "_titulo"]
-        if len(claves) == 1:
-            plano[claves[0]] = t[claves[0]]
+        for k, v in t.items():
+            if k != "_titulo":
+                plano[k] = v
 
     def campo(nombre):
         return plano.get(nombre, "")
@@ -611,6 +614,7 @@ def _parsear_resultado_runt_vehiculo(page):
     # --- DIAGNOSTICO TEMPORAL (quitar despues de confirmar que funciona) ---
     datos["_debug_tarjeta_rtm"] = [t for t in tarjetas if "revision tecnico" in t.get("_titulo", "").lower()]
     datos["_debug_tarjeta_datos_tecnicos"] = [t for t in tarjetas if "Capacidad de Carga" in t]
+    datos["_debug_resumen"] = resumen
     # --- FIN DIAGNOSTICO TEMPORAL ---
 
     return datos
