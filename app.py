@@ -306,6 +306,250 @@ def cache_municipal_guardar_paz_salvo(placa, municipio, fecha_pago, marca, valor
         print(f"Error cache municipal guardar: {e}")
 
 
+def resolver_captcha_imagen_2captcha(imagen_base64, intentos=3):
+    """Resuelve un captcha de imagen simple (texto distorsionado) con 2Captcha.
+    A diferencia de resolver_recaptcha_2captcha (que usa 'userrecaptcha'/'turnstile'
+    con un sitekey), esto manda la imagen directamente y 2Captcha devuelve el texto
+    que un humano leeria en ella. Se usa para el captcha del RUNT."""
+    ultimo_error = None
+    for intento in range(intentos):
+        try:
+            resp = requests.post("https://2captcha.com/in.php", data={
+                "key": TWOCAPTCHA_API_KEY, "method": "base64",
+                "body": imagen_base64, "json": 1,
+            }, timeout=15)
+            data = resp.json()
+            if data.get("status") != 1:
+                raise Exception(f"2captcha error: {data.get('request')}")
+            captcha_id = data["request"]
+
+            for _ in range(24):  # hasta 2 minutos (24 x 5s)
+                time.sleep(5)
+                resp2 = requests.get("https://2captcha.com/res.php", params={
+                    "key": TWOCAPTCHA_API_KEY, "action": "get", "id": captcha_id, "json": 1,
+                }, timeout=15)
+                data2 = resp2.json()
+                if data2.get("status") == 1:
+                    return data2["request"]
+                if data2.get("request") != "CAPCHA_NOT_READY":
+                    raise Exception(f"2captcha error: {data2.get('request')}")
+
+            raise Exception("2captcha timeout esperando solucion")
+        except Exception as e:
+            ultimo_error = e
+            print(f"  → Intento {intento+1} de captcha imagen fallo: {e}")
+    raise ultimo_error
+
+
+RUNT_URL = "https://portalpublico.runt.gov.co/#/consulta-vehiculo/consulta/consulta-ciudadana"
+RUNT_TIPO_DOC_MAP = {
+    "CC": "Cédula Ciudadanía", "CE": "Cédula Extranjería", "NIT": "NIT",
+    "PASAP": "Pasaporte", "TI": "Tarjeta Identidad", "PPT": "Permiso por Protección Temporal",
+}
+
+
+def _runt_seleccionar_mat_select(page, form_control, texto_opcion):
+    """Los <select> de Angular Material no son <select> normales -- hay que
+    hacer click para abrir el desplegable y luego click en la opcion deseada."""
+    page.click(f'mat-select[formcontrolname="{form_control}"]')
+    page.click(f'mat-option:has-text("{texto_opcion}")')
+
+
+def consultar_runt_vehiculo(page, placa, cedula, tipo_documento="CC", job_id=None):
+    """Consulta 'Placa y Propietario' en el RUNT. Devuelve un dict con los
+    campos ya organizados segun el esquema de la tabla 'vehiculos', mas un
+    sub-dict 'persona' si el RUNT tambien confirmo datos basicos del
+    propietario en esta misma consulta."""
+    if job_id:
+        job_actualizar(job_id, "Abriendo el RUNT...", "procesando")
+
+    page.goto(RUNT_URL, wait_until="networkidle", timeout=60000)
+    page.wait_for_selector('input[formcontrolname="placa"]', timeout=30000)
+
+    # Procedencia (Nacional) y Consultar Por (Placa y Propietario) ya vienen
+    # seleccionados por defecto -- no hace falta tocarlos.
+    page.fill('input[formcontrolname="placa"]', placa.upper())
+
+    if tipo_documento != "CC":
+        # "Cedula Ciudadania" es el default, solo se cambia si es otro tipo
+        texto = RUNT_TIPO_DOC_MAP.get(tipo_documento, "Cédula Ciudadanía")
+        _runt_seleccionar_mat_select(page, "tipoDocumento", texto)
+
+    page.fill('input[formcontrolname="documento"]', cedula)
+
+    if job_id:
+        job_actualizar(job_id, "Resolviendo captcha...", "procesando")
+
+    # Reintenta hasta 3 veces si el captcha resulta incorrecto (el RUNT
+    # regenera la imagen cada vez que falla).
+    for intento_captcha in range(3):
+        img_src = page.get_attribute('img.img-responsive.img-fluid', 'src')
+        imagen_base64 = img_src.split(',', 1)[1]  # quitar el prefijo "data:image/png;base64,"
+
+        texto_captcha = resolver_captcha_imagen_2captcha(imagen_base64)
+
+        page.fill('input[formcontrolname="captcha"]', texto_captcha)
+
+        if job_id:
+            job_actualizar(job_id, "Consultando informacion...", "procesando")
+
+        page.click('button[type="submit"]')
+
+        try:
+            page.wait_for_selector(
+                'cyrconsultavehiculo-info-vehiculo-detallada, .mat-error, .swal2-popup',
+                timeout=20000
+            )
+        except Exception:
+            pass
+
+        # Si el captcha estaba mal, el RUNT normalmente muestra un mensaje
+        # de error (swal2) y limpia el campo -- reintentamos con una imagen nueva.
+        error_captcha = page.query_selector('.swal2-popup:has-text("captcha")') \
+                     or page.query_selector('.swal2-popup:has-text("Captcha")')
+        if error_captcha:
+            page.click('.swal2-confirm') if page.query_selector('.swal2-confirm') else None
+            continue
+
+        break
+
+    if job_id:
+        job_actualizar(job_id, "Extrayendo datos...", "procesando")
+
+    return _parsear_resultado_runt_vehiculo(page)
+
+
+def _texto_tras_label(texto_completo, etiqueta):
+    """Busca 'Etiqueta: valor' dentro de un bloque de texto plano (asi es
+    como se extraen los datos, ya que el RUNT no usa IDs limpios por campo,
+    solo <strong>Etiqueta:</strong> valor dentro de tarjetas)."""
+    patron = re.escape(etiqueta) + r"\s*:?\s*\n?\s*([^\n]*)"
+    m = re.search(patron, texto_completo, re.IGNORECASE)
+    return m.group(1).strip() if m else ""
+
+
+def _parsear_resultado_runt_vehiculo(page):
+    texto = page.inner_text('body')
+
+    datos = {
+        "marca": _texto_tras_label(texto, "Marca"),
+        "linea": _texto_tras_label(texto, "Línea"),
+        "modelo": _texto_tras_label(texto, "Modelo"),
+        "color": _texto_tras_label(texto, "Color"),
+        "clase": _texto_tras_label(texto, "Clase de vehículo"),
+        "servicio": _texto_tras_label(texto, "Tipo de servicio"),
+        "numero_serie": _texto_tras_label(texto, "Número de serie"),
+        "numero_motor": _texto_tras_label(texto, "Número de motor"),
+        "numero_chasis": _texto_tras_label(texto, "Número de chasis"),
+        "vin": _texto_tras_label(texto, "Número de VIN"),
+        "cilindrada": _texto_tras_label(texto, "Cilindraje"),
+        "carroceria": _texto_tras_label(texto, "Tipo de carrocería"),
+        "combustible": _texto_tras_label(texto, "Tipo Combustible"),
+        "autoridad_transito": _texto_tras_label(texto, "Autoridad de tránsito"),
+        "puertas": _texto_tras_label(texto, "Puertas"),
+        "capacidad_carga": _texto_tras_label(texto, "Capacidad de Carga"),
+        "peso_bruto_vehicular": _texto_tras_label(texto, "Peso Bruto Vehicular"),
+        "capacidad_pasajeros": _texto_tras_label(texto, "Capacidad de Pasajeros"),
+        "pasajeros_sentados": _texto_tras_label(texto, "Pasajeros Sentados"),
+        "numero_ejes": _texto_tras_label(texto, "Número de Ejes"),
+        "estado_vehiculo": _texto_tras_label(texto, "Estado del vehículo"),
+        "gravamenes_propiedad": _texto_tras_label(texto, "Gravámenes a la propiedad").upper() == "SI",
+    }
+
+    fecha_matricula = _texto_tras_label(texto, "Fecha de Matricula Inicial")
+    datos["fecha_matricula_inicial"] = _convertir_fecha_ddmmyyyy(fecha_matricula)
+
+    # Ultimo tramite relevante (no SOAT ni RTM) -- primera "Solicitud" que
+    # no mencione esos dos conceptos en "Tramites Realizados".
+    for bloque in re.findall(r"Solicitud \d+.*?(?=Solicitud \d+|\Z)", texto, re.DOTALL):
+        tramites = _texto_tras_label(bloque, "Trámites Realizados")
+        if tramites and "revision tecnico mecanica" not in tramites.lower() and "soat" not in tramites.lower():
+            datos["ultimo_tramite_tipo"] = tramites.strip(", ")
+            datos["ultimo_tramite_fecha"] = _convertir_fecha_ddmmyyyy(_texto_tras_label(bloque, "Fecha de Solicitud"))
+            datos["ultimo_tramite_estado"] = _texto_tras_label(bloque, "Estado")
+            datos["ultimo_tramite_entidad"] = _texto_tras_label(bloque, "Entidad")
+            break
+
+    # SOAT vigente: primera tarjeta de poliza que diga "VIGENTE"
+    for bloque in re.findall(r"Póliza SOAT.*?(?=Póliza SOAT|\Z)", texto, re.DOTALL):
+        if "VIGENTE" in bloque and "NO VIGENTE" not in bloque:
+            datos["soat_vigente"] = True
+            datos["soat_fecha_fin"] = _convertir_fecha_ddmmyyyy(_texto_tras_label(bloque, "Fecha fin de vigencia"))
+            break
+    else:
+        datos["soat_vigente"] = False
+
+    # RTM vigente: tarjeta de revision tecnico-mecanica con "Vigente: SI"
+    for bloque in re.findall(r"REVISION TECNICO-MECANICO.*?(?=REVISION TECNICO-MECANICO|\Z)", texto, re.DOTALL):
+        if _texto_tras_label(bloque, "Vigente").upper() == "SI":
+            datos["rtm_vigente"] = True
+            datos["rtm_fecha_fin"] = _convertir_fecha_ddmmyyyy(_texto_tras_label(bloque, "Fecha Vigencia"))
+            break
+    else:
+        datos["rtm_vigente"] = False
+
+    # Garantias a Favor De -- solo si el acreedor esta afiliado a Confecamaras
+    if "Garantía a Favor De" in texto and "No se encontró información" not in texto.split("Garantía a Favor De")[1][:200]:
+        bloque_favor = texto.split("Garantía a Favor De", 1)[1]
+        datos["garantia_favor_acreedor"] = _texto_tras_label(bloque_favor, "Acreedor")
+        datos["garantia_favor_entidad_nit"] = _texto_tras_label(bloque_favor, "Identificación Acreedor")
+        datos["garantia_favor_fecha_inscripcion"] = _convertir_fecha_ddmmyyyy(_texto_tras_label(bloque_favor, "Fecha Inscripción"))
+
+    # Garantias Mobiliarias -- hasta 2 registros (inscripcion / levantamiento),
+    # se distinguen por el texto libre del campo "Estado".
+    if "ID Prenda:" in texto:
+        for bloque in re.findall(r"ID Prenda:.*?(?=ID Prenda:|Tarjeta de Operación|\Z)", texto, re.DOTALL):
+            estado_texto = _texto_tras_label(bloque, "Estado").lower()
+            prefijo = "garantia_levantamiento_" if "levantamiento" in estado_texto else "garantia_inscripcion_"
+            datos[prefijo + "id_prenda"] = _texto_tras_label(bloque, "ID Prenda")
+            datos[prefijo + "entidad"] = _texto_tras_label(bloque, "Entidad")
+            datos[prefijo + "entidad_nit"] = _texto_tras_label(bloque, "Identificación Entidad").replace("NIT", "").strip()
+            datos[prefijo + "fecha"] = _convertir_fecha_ddmmyyyy(_texto_tras_label(bloque, "Fecha de Registro"))
+
+    datos["placa"] = placa_desde_texto(texto)
+    return datos
+
+
+def placa_desde_texto(texto):
+    m = re.search(r"PLACA DEL VEHÍCULO:\s*\n?\s*([A-Z0-9]+)", texto, re.IGNORECASE)
+    return m.group(1).strip().upper() if m else ""
+
+
+def _convertir_fecha_ddmmyyyy(fecha_str):
+    """Convierte 'dd/mm/yyyy' (formato del RUNT) a 'yyyy-mm-dd' (formato de
+    Postgres), o None si el texto viene vacio."""
+    fecha_str = (fecha_str or "").strip()
+    if not fecha_str:
+        return None
+    try:
+        dd, mm, yyyy = fecha_str.split("/")
+        return f"{yyyy}-{mm}-{dd}"
+    except Exception:
+        return None
+
+
+def guardar_vehiculo_runt(datos):
+    """Guarda (o actualiza) los datos de un vehiculo consultado en el RUNT."""
+    try:
+        conn = get_db_conn()
+        cur = conn.cursor()
+        columnas = [k for k in datos.keys() if k != "placa"]
+        set_clause = ", ".join(f"{c}=EXCLUDED.{c}" for c in columnas)
+        cols_sql = ", ".join(["placa"] + columnas + ["leido_en"])
+        vals_sql = ", ".join(["%s"] * (len(columnas) + 2))
+        valores = [datos["placa"]] + [datos.get(c) for c in columnas] + [datetime.now()]
+        cur.execute(f"""
+            INSERT INTO vehiculos ({cols_sql})
+            VALUES ({vals_sql})
+            ON CONFLICT (placa) DO UPDATE SET {set_clause}, leido_en=EXCLUDED.leido_en
+        """, valores)
+        conn.commit()
+        cur.close(); conn.close()
+        print(f"  → Vehiculo RUNT guardado: {datos['placa']}")
+    except Exception as e:
+        print(f"Error guardando vehiculo RUNT: {e}")
+
+
 def bloquear_recursos(page):
     page.route("**/*", lambda route: route.abort()
                if route.request.resource_type in ["image", "stylesheet", "font", "media", "other"]
@@ -1694,6 +1938,53 @@ def consultar_antioquia_vigencias():
             "propietario": estado_veh.get("nombrePropietario", ""),
         }
     })
+
+
+@app.route("/consultar-runt-vehiculo", methods=["GET"])
+def consultar_runt_vehiculo_endpoint():
+    """Consulta el RUNT (Placa y Propietario) para una placa + cedula.
+    Es una consulta con su propio costo de 2Captcha, independiente de las
+    consultas de impuestos -- por eso se guarda directo en la tabla
+    'vehiculos' cada vez que se llama, sin verificar cache primero (los
+    datos del RUNT cambian con cada tramite, a diferencia del estado de
+    paz y salvo que dura todo el año)."""
+    placa  = request.args.get("placa", "").upper().strip()
+    cedula = request.args.get("cedula", "").strip()
+    tipo_documento = request.args.get("tipo_documento", "CC").strip().upper() or "CC"
+
+    if not placa or not cedula:
+        return jsonify({"error": "Debes proporcionar placa y cedula."}), 400
+
+    job_id = str(uuid.uuid4())[:12]
+    job_actualizar(job_id, "Iniciando consulta RUNT...", "procesando")
+
+    def ejecutar():
+        try:
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch(headless=True, args=[
+                    "--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu",
+                    "--single-process", "--no-zygote", "--disable-setuid-sandbox"
+                ])
+                context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                page = context.new_page()
+                datos = consultar_runt_vehiculo(page, placa, cedula, tipo_documento, job_id=job_id)
+                context.close(); browser.close()
+
+            if not datos.get("placa"):
+                job_error(job_id, "No se pudo leer la placa en el resultado. Verifica los datos o intenta de nuevo.")
+                return
+
+            guardar_vehiculo_runt(datos)
+            job_terminar(job_id, datos)
+        except Exception as e:
+            import traceback
+            print(traceback.format_exc(), flush=True)
+            job_error(job_id, str(e))
+
+    hilo = threading.Thread(target=ejecutar)
+    hilo.start()
+
+    return jsonify({"job_id": job_id})
 
 
 @app.route("/consultar/estado", methods=["GET"])
