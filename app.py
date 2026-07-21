@@ -444,7 +444,13 @@ def consultar_runt_vehiculo(page, placa, cedula, tipo_documento="CC", job_id=Non
     if job_id:
         job_actualizar(job_id, "Extrayendo datos...", "procesando")
 
-    return _parsear_resultado_runt_vehiculo(page)
+    total_paneles = len(page.query_selector_all('mat-expansion-panel-header'))
+    paneles_aun_colapsados = len(page.query_selector_all('mat-expansion-panel-header[aria-expanded="false"]'))
+
+    datos = _parsear_resultado_runt_vehiculo(page)
+    datos["_debug_total_paneles"] = total_paneles
+    datos["_debug_paneles_aun_colapsados"] = paneles_aun_colapsados
+    return datos
 
 
 def _texto_tras_label(texto_completo, etiqueta):
@@ -545,6 +551,18 @@ def _parsear_resultado_runt_vehiculo(page):
             datos[prefijo + "fecha"] = _convertir_fecha_ddmmyyyy(_texto_tras_label(bloque, "Fecha de Registro"))
 
     datos["placa"] = placa_desde_texto(texto)
+
+    # --- DIAGNOSTICO TEMPORAL (quitar despues de resolver el problema) ---
+    datos["_debug_longitud_texto"] = len(texto)
+    datos["_debug_contiene_SOAT"] = "SOAT" in texto
+    datos["_debug_contiene_VIGENTE"] = "VIGENTE" in texto
+    datos["_debug_contiene_id_prenda"] = "ID Prenda" in texto
+    idx_soat = texto.find("Póliza SOAT")
+    datos["_debug_fragmento_soat"] = texto[idx_soat:idx_soat+400] if idx_soat >= 0 else "NO_ENCONTRADO"
+    idx_prenda = texto.find("ID Prenda")
+    datos["_debug_fragmento_prenda"] = texto[idx_prenda:idx_prenda+400] if idx_prenda >= 0 else "NO_ENCONTRADO"
+    # --- FIN DIAGNOSTICO TEMPORAL ---
+
     return datos
 
 
