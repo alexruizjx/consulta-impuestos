@@ -453,122 +453,157 @@ def consultar_runt_vehiculo(page, placa, cedula, tipo_documento="CC", job_id=Non
     return datos
 
 
-def _texto_tras_label(texto_completo, etiqueta):
-    """Busca 'Etiqueta: valor' dentro de un bloque de texto plano (asi es
-    como se extraen los datos, ya que el RUNT no usa IDs limpios por campo,
-    solo <strong>Etiqueta:</strong> valor dentro de tarjetas).
-    Exige el ':' (si no, frases sueltas que casualmente contienen el texto
-    de la etiqueta -- como el aviso legal de la parte superior -- generan
-    falsos positivos). Si lo capturado a su vez contiene ':', es señal de
-    que el campo real estaba vacio y se "comio" la siguiente etiqueta --
-    en ese caso se trata como vacio en vez de devolver basura."""
-    patron = re.escape(etiqueta).replace(r"\ ", r"\s+") + r"\s*:\s*\n?\s*([^\n]*)"
-    m = re.search(patron, texto_completo, re.IGNORECASE)
-    if not m:
-        return ""
-    valor = m.group(1).strip()
-    if ":" in valor:
-        return ""
-    return valor
+def _extraer_tarjetas_runt(page):
+    """Lee directamente el HTML (no el texto visual) de cada <mat-card> de
+    la pagina de resultados, devolviendo un diccionario {etiqueta: valor}
+    por cada tarjeta. Esto es inmune a que el CSS reordene visualmente las
+    etiquetas y los valores (que es justo lo que rompia la extraccion por
+    texto plano: en algunas secciones el navegador pinta primero todas las
+    etiquetas y luego todos los valores, aunque en el HTML esten
+    correctamente emparejados)."""
+    return page.evaluate("""
+        () => {
+            const tarjetas = [];
+            document.querySelectorAll('mat-card').forEach(card => {
+                const campos = {};
+                card.querySelectorAll('p').forEach(p => {
+                    const strong = p.querySelector('strong');
+                    if (strong) {
+                        const label = strong.innerText.replace(/:\\s*$/, '').trim();
+                        const value = p.innerText.slice(strong.innerText.length).trim();
+                        if (label) campos[label] = value;
+                    }
+                });
+                card.querySelectorAll('div.col-12').forEach(div => {
+                    const labs = div.querySelectorAll('label');
+                    if (labs.length >= 2) {
+                        const label = labs[0].innerText.replace(/:\\s*$/, '').trim();
+                        const value = labs[1].innerText.trim();
+                        if (label) campos[label] = value;
+                    }
+                });
+                const titulo = card.querySelector('mat-card-title');
+                if (titulo) campos['_titulo'] = titulo.innerText.trim();
+                if (Object.keys(campos).length > 0) tarjetas.push(campos);
+            });
+            return tarjetas;
+        }
+    """)
+
+
+def _extraer_placa_runt(page):
+    return page.evaluate("""
+        () => {
+            const labels = Array.from(document.querySelectorAll('label'));
+            const lbl = labels.find(l => l.innerText.includes('PLACA DEL VEH'));
+            if (!lbl) return '';
+            const fila = lbl.closest('.row');
+            if (!fila) return '';
+            const b = fila.querySelector('b');
+            return b ? b.innerText.trim() : '';
+        }
+    """) or ""
 
 
 def _parsear_resultado_runt_vehiculo(page):
-    texto = page.inner_text('body')
+    tarjetas = _extraer_tarjetas_runt(page)
+
+    # Las tarjetas de un solo campo (la info general del vehiculo -- marca,
+    # modelo, etc. -- cada una vive en su propia <mat-card>) se combinan en
+    # un solo diccionario plano para leerlas facil.
+    plano = {}
+    for t in tarjetas:
+        claves = [k for k in t if k != "_titulo"]
+        if len(claves) == 1:
+            plano[claves[0]] = t[claves[0]]
+
+    def campo(nombre):
+        return plano.get(nombre, "")
 
     datos = {
-        "marca": _texto_tras_label(texto, "Marca"),
-        "linea": _texto_tras_label(texto, "Línea"),
-        "modelo": _texto_tras_label(texto, "Modelo"),
-        "color": _texto_tras_label(texto, "Color"),
-        "clase": _texto_tras_label(texto, "Clase de vehículo"),
-        "servicio": _texto_tras_label(texto, "Tipo de servicio"),
-        "numero_serie": _texto_tras_label(texto, "Número de serie"),
-        "numero_motor": _texto_tras_label(texto, "Número de motor"),
-        "numero_chasis": _texto_tras_label(texto, "Número de chasis"),
-        "vin": _texto_tras_label(texto, "Número de VIN"),
-        "cilindrada": _texto_tras_label(texto, "Cilindraje"),
-        "carroceria": _texto_tras_label(texto, "Tipo de carrocería"),
-        "combustible": _texto_tras_label(texto, "Tipo Combustible"),
-        "autoridad_transito": _texto_tras_label(texto, "Autoridad de tránsito"),
-        "puertas": _texto_tras_label(texto, "Puertas"),
-        "capacidad_carga": _texto_tras_label(texto, "Capacidad de Carga"),
-        "peso_bruto_vehicular": _texto_tras_label(texto, "Peso Bruto Vehicular"),
-        "capacidad_pasajeros": _texto_tras_label(texto, "Capacidad de Pasajeros"),
-        "pasajeros_sentados": _texto_tras_label(texto, "Pasajeros Sentados"),
-        "numero_ejes": _texto_tras_label(texto, "Número de Ejes"),
-        "estado_vehiculo": _texto_tras_label(texto, "Estado del vehículo"),
-        "gravamenes_propiedad": _texto_tras_label(texto, "Gravámenes a la propiedad").upper() == "SI",
+        "marca": campo("Marca"),
+        "linea": campo("Línea"),
+        "modelo": campo("Modelo"),
+        "color": campo("Color"),
+        "clase": campo("Clase de vehículo"),
+        "servicio": campo("Tipo de servicio"),
+        "numero_serie": campo("Número de serie"),
+        "numero_motor": campo("Número de motor"),
+        "numero_chasis": campo("Número de chasis"),
+        "vin": campo("Número de VIN"),
+        "cilindrada": campo("Cilindraje"),
+        "carroceria": campo("Tipo de carrocería"),
+        "combustible": campo("Tipo Combustible"),
+        "autoridad_transito": campo("Autoridad de tránsito"),
+        "puertas": campo("Puertas"),
+        "capacidad_carga": campo("Capacidad de Carga"),
+        "peso_bruto_vehicular": campo("Peso Bruto Vehicular"),
+        "capacidad_pasajeros": campo("Capacidad de Pasajeros"),
+        "pasajeros_sentados": campo("Pasajeros Sentados"),
+        "numero_ejes": campo("Número de Ejes"),
+        "estado_vehiculo": campo("Estado del vehículo"),
+        "gravamenes_propiedad": campo("Gravámenes a la propiedad").upper() == "SI",
+        "fecha_matricula_inicial": _convertir_fecha_ddmmyyyy(campo("Fecha de Matricula Inicial")),
     }
 
-    fecha_matricula = _texto_tras_label(texto, "Fecha de Matricula Inicial")
-    datos["fecha_matricula_inicial"] = _convertir_fecha_ddmmyyyy(fecha_matricula)
+    # SOAT vigente: primera tarjeta con "Número de póliza" cuyo Estado diga VIGENTE
+    datos["soat_vigente"] = False
+    for t in tarjetas:
+        if "Número de póliza" in t:
+            estado = t.get("Estado", "").upper()
+            if "VIGENTE" in estado and "NO VIGENTE" not in estado:
+                datos["soat_vigente"] = True
+                datos["soat_fecha_fin"] = _convertir_fecha_ddmmyyyy(t.get("Fecha fin de vigencia", ""))
+                break
 
-    # Ultimo tramite relevante (no SOAT ni RTM) -- primera "Solicitud" que
-    # no mencione esos dos conceptos en "Tramites Realizados".
-    for bloque in re.findall(r"Solicitud \d+.*?(?=Solicitud \d+|\Z)", texto, re.DOTALL):
-        tramites = _texto_tras_label(bloque, "Trámites Realizados")
-        if tramites and "revision tecnico mecanica" not in tramites.lower() and "soat" not in tramites.lower():
-            datos["ultimo_tramite_tipo"] = tramites.strip(", ")
-            datos["ultimo_tramite_fecha"] = _convertir_fecha_ddmmyyyy(_texto_tras_label(bloque, "Fecha de Solicitud"))
-            datos["ultimo_tramite_estado"] = _texto_tras_label(bloque, "Estado")
-            datos["ultimo_tramite_entidad"] = _texto_tras_label(bloque, "Entidad")
-            break
+    # RTM vigente: tarjeta "REVISION TECNICO-MECANICO" con Vigente = SI
+    datos["rtm_vigente"] = False
+    for t in tarjetas:
+        if t.get("_titulo", "").upper().startswith("REVISION TECNICO"):
+            if t.get("Vigente", "").upper() == "SI":
+                datos["rtm_vigente"] = True
+                datos["rtm_fecha_fin"] = _convertir_fecha_ddmmyyyy(t.get("Fecha Vigencia", ""))
+                break
 
-    # SOAT vigente: primera tarjeta de poliza que diga "VIGENTE"
-    for bloque in re.findall(r"Póliza SOAT.*?(?=Póliza SOAT|\Z)", texto, re.DOTALL):
-        if "VIGENTE" in bloque and "NO VIGENTE" not in bloque:
-            datos["soat_vigente"] = True
-            datos["soat_fecha_fin"] = _convertir_fecha_ddmmyyyy(_texto_tras_label(bloque, "Fecha fin de vigencia"))
-            break
-    else:
-        datos["soat_vigente"] = False
-
-    # RTM vigente: tarjeta de revision tecnico-mecanica con "Vigente: SI"
-    for bloque in re.findall(r"REVISION TECNICO-MECANICO.*?(?=REVISION TECNICO-MECANICO|\Z)", texto, re.DOTALL):
-        if _texto_tras_label(bloque, "Vigente").upper() == "SI":
-            datos["rtm_vigente"] = True
-            datos["rtm_fecha_fin"] = _convertir_fecha_ddmmyyyy(_texto_tras_label(bloque, "Fecha Vigencia"))
-            break
-    else:
-        datos["rtm_vigente"] = False
+    # Ultimo tramite relevante (no SOAT ni RTM) -- primera tarjeta "Solicitud NNN"
+    for t in tarjetas:
+        if t.get("_titulo", "").startswith("Solicitud"):
+            tramites = t.get("Trámites Realizados", "")
+            if tramites and "revision tecnico mecanica" not in tramites.lower() and "soat" not in tramites.lower():
+                datos["ultimo_tramite_tipo"] = tramites.strip(", ")
+                datos["ultimo_tramite_fecha"] = _convertir_fecha_ddmmyyyy(t.get("Fecha de Solicitud", ""))
+                datos["ultimo_tramite_estado"] = t.get("Estado", "")
+                datos["ultimo_tramite_entidad"] = t.get("Entidad", "")
+                break
 
     # Garantias a Favor De -- solo si el acreedor esta afiliado a Confecamaras
-    if "Garantía a Favor De" in texto and "No se encontró información" not in texto.split("Garantía a Favor De")[1][:200]:
-        bloque_favor = texto.split("Garantía a Favor De", 1)[1]
-        datos["garantia_favor_acreedor"] = _texto_tras_label(bloque_favor, "Acreedor")
-        datos["garantia_favor_entidad_nit"] = _texto_tras_label(bloque_favor, "Identificación Acreedor")
-        datos["garantia_favor_fecha_inscripcion"] = _convertir_fecha_ddmmyyyy(_texto_tras_label(bloque_favor, "Fecha Inscripción"))
+    for t in tarjetas:
+        if "Acreedor" in t and "Identificación Acreedor" in t:
+            datos["garantia_favor_acreedor"] = t.get("Acreedor", "")
+            datos["garantia_favor_entidad_nit"] = t.get("Identificación Acreedor", "").replace("NIT", "").strip()
+            datos["garantia_favor_fecha_inscripcion"] = _convertir_fecha_ddmmyyyy(t.get("Fecha Inscripción", ""))
+            break
 
     # Garantias Mobiliarias -- hasta 2 registros (inscripcion / levantamiento),
     # se distinguen por el texto libre del campo "Estado".
-    if "ID Prenda:" in texto:
-        for bloque in re.findall(r"ID Prenda:.*?(?=ID Prenda:|Tarjeta de Operación|\Z)", texto, re.DOTALL):
-            estado_texto = _texto_tras_label(bloque, "Estado").lower()
+    for t in tarjetas:
+        if "ID Prenda" in t:
+            estado_texto = t.get("Estado", "").lower()
             prefijo = "garantia_levantamiento_" if "levantamiento" in estado_texto else "garantia_inscripcion_"
-            datos[prefijo + "id_prenda"] = _texto_tras_label(bloque, "ID Prenda")
-            datos[prefijo + "entidad"] = _texto_tras_label(bloque, "Entidad")
-            datos[prefijo + "entidad_nit"] = _texto_tras_label(bloque, "Identificación Entidad").replace("NIT", "").strip()
-            datos[prefijo + "fecha"] = _convertir_fecha_ddmmyyyy(_texto_tras_label(bloque, "Fecha de Registro"))
+            datos[prefijo + "id_prenda"] = t.get("ID Prenda", "")
+            datos[prefijo + "entidad"] = t.get("Entidad", "")
+            datos[prefijo + "entidad_nit"] = t.get("Identificación Entidad", "").replace("NIT", "").strip()
+            datos[prefijo + "fecha"] = _convertir_fecha_ddmmyyyy(t.get("Fecha de Registro", ""))
 
-    datos["placa"] = placa_desde_texto(texto)
+    datos["placa"] = _extraer_placa_runt(page).upper()
 
-    # --- DIAGNOSTICO TEMPORAL (quitar despues de resolver el problema) ---
-    datos["_debug_longitud_texto"] = len(texto)
-    datos["_debug_contiene_SOAT"] = "SOAT" in texto
-    datos["_debug_contiene_VIGENTE"] = "VIGENTE" in texto
-    datos["_debug_contiene_id_prenda"] = "ID Prenda" in texto
-    idx_soat = texto.find("Póliza SOAT")
-    datos["_debug_fragmento_soat"] = texto[idx_soat:idx_soat+400] if idx_soat >= 0 else "NO_ENCONTRADO"
-    idx_prenda = texto.find("ID Prenda")
-    datos["_debug_fragmento_prenda"] = texto[idx_prenda:idx_prenda+400] if idx_prenda >= 0 else "NO_ENCONTRADO"
+    # --- DIAGNOSTICO TEMPORAL (quitar despues de confirmar que funciona) ---
+    datos["_debug_num_tarjetas"] = len(tarjetas)
+    datos["_debug_tarjetas_soat"] = [t for t in tarjetas if "Número de póliza" in t]
+    datos["_debug_tarjetas_prenda"] = [t for t in tarjetas if "ID Prenda" in t]
     # --- FIN DIAGNOSTICO TEMPORAL ---
 
     return datos
-
-
-def placa_desde_texto(texto):
-    m = re.search(r"PLACA DEL VEHÍCULO:\s*\n?\s*([A-Z0-9]+)", texto, re.IGNORECASE)
-    return m.group(1).strip().upper() if m else ""
 
 
 def _convertir_fecha_ddmmyyyy(fecha_str):
@@ -589,7 +624,9 @@ def guardar_vehiculo_runt(datos):
     try:
         conn = get_db_conn()
         cur = conn.cursor()
-        columnas = [k for k in datos.keys() if k != "placa"]
+        # Los campos "_debug_*" son solo para diagnostico en pantalla, no
+        # corresponden a columnas reales de la tabla.
+        columnas = [k for k in datos.keys() if k != "placa" and not k.startswith("_debug")]
         set_clause = ", ".join(f"{c}=EXCLUDED.{c}" for c in columnas)
         cols_sql = ", ".join(["placa"] + columnas + ["leido_en"])
         vals_sql = ", ".join(["%s"] * (len(columnas) + 2))
