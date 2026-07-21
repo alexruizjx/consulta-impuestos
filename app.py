@@ -251,6 +251,61 @@ def cache_antioquia_guardar_deuda(placa, vigencias_data, avaluo):
         print(f"Error cache guardar deuda: {e}")
 
 
+# ============================================================
+#  CACHE IMPUESTOS MUNICIPALES (Envigado, Sabaneta, Itagui, Bello,
+#  La Estrella, Medellin, etc.) -- mismo principio que el cache de
+#  Antioquia: si una placa esta a paz y salvo, lo esta hasta fin de
+#  año, asi que no hace falta volver a consultar la pagina del
+#  municipio (que es una consulta lenta via Playwright).
+# ============================================================
+
+def cache_municipal_buscar(placa, municipio):
+    """Busca PAZ_Y_SALVO en cache municipal para el año actual."""
+    try:
+        anio_actual = datetime.now().year
+        conn = get_db_conn()
+        cur  = conn.cursor()
+        cur.execute("""
+            SELECT fecha_pago, marca_pago, valor_pago, placa_vista
+            FROM cache_impuestos_municipales
+            WHERE placa = %s AND municipio = %s AND vigencia = %s AND estado = 'PAZ_Y_SALVO'
+              AND (expira_en IS NULL OR expira_en >= NOW())
+            ORDER BY creado_en DESC LIMIT 1
+        """, (placa.upper(), municipio.lower(), str(anio_actual)))
+        row = cur.fetchone()
+        cur.close(); conn.close()
+        if row:
+            return {"fecha_pago": row[0] or "", "marca": row[1] or "", "valor_pago": row[2] or "", "placa_vista": row[3] or ""}
+        return None
+    except Exception as e:
+        print(f"Error cache municipal buscar: {e}")
+        return None
+
+
+def cache_municipal_guardar_paz_salvo(placa, municipio, fecha_pago, marca, valor_pago, placa_vista):
+    """Guarda en cache que la placa esta a paz y salvo en ese municipio hasta fin de año."""
+    try:
+        anio_actual = datetime.now().year
+        expira = f"{anio_actual}-12-31"
+        conn = get_db_conn()
+        cur  = conn.cursor()
+        cur.execute("""
+            INSERT INTO cache_impuestos_municipales
+                (placa, municipio, vigencia, estado, fecha_pago, marca_pago, valor_pago, placa_vista, expira_en, creado_en)
+            VALUES (%s, %s, %s, 'PAZ_Y_SALVO', %s, %s, %s, %s, %s, NOW())
+            ON CONFLICT (placa, municipio, vigencia) DO UPDATE SET
+                estado='PAZ_Y_SALVO', fecha_pago=EXCLUDED.fecha_pago,
+                marca_pago=EXCLUDED.marca_pago, valor_pago=EXCLUDED.valor_pago,
+                placa_vista=EXCLUDED.placa_vista, expira_en=EXCLUDED.expira_en,
+                actualizado_en=NOW()
+        """, (placa.upper(), municipio.lower(), str(anio_actual), fecha_pago or '', marca or '', valor_pago or '', placa_vista or '', expira))
+        conn.commit()
+        cur.close(); conn.close()
+        print(f"  → Cache municipal guardado PAZ_Y_SALVO para {placa} en {municipio}")
+    except Exception as e:
+        print(f"Error cache municipal guardar: {e}")
+
+
 def bloquear_recursos(page):
     page.route("**/*", lambda route: route.abort()
                if route.request.resource_type in ["image", "stylesheet", "font", "media", "other"]
@@ -1309,6 +1364,26 @@ def consultar():
 
     # Municipios síncronos
     if municipio != "antioquia":
+        # Verificar cache antes de lanzar Playwright -- si ya sabemos que esta
+        # a paz y salvo este año, no hace falta volver a consultar la pagina
+        # del municipio (evita una consulta lenta e innecesaria).
+        cache_hit_mun = cache_municipal_buscar(placa, municipio)
+        if cache_hit_mun:
+            print(f"  → Cache hit municipal para {placa} en {municipio} — respondiendo sin Playwright")
+            return jsonify({
+                "placa":       placa,
+                "municipio":   municipio,
+                "registros":   [],
+                "total":       0,
+                "sin_deuda":   True,
+                "verificado":  True,
+                "placa_vista": cache_hit_mun["placa_vista"],
+                "fecha_pago":  cache_hit_mun["fecha_pago"],
+                "marca":       cache_hit_mun["marca"],
+                "valor_pago":  cache_hit_mun["valor_pago"],
+                "desde_cache": True,
+            })
+
         resultado       = {}
         error_container = {}
 
@@ -1425,6 +1500,13 @@ def consultar():
                 valor_pago_mun  = vp2
                 placa_vista_mun = pv2
                 verificado_mun  = bool(pv2 or mp2)
+
+        # Guardar en cache si quedo confirmado a paz y salvo -- asi no se
+        # vuelve a consultar este municipio para esta placa el resto del año.
+        if verificado_mun and total_mun == 0 and not registros_mun:
+            cache_municipal_guardar_paz_salvo(
+                placa, municipio, fecha_pago_mun, marca_pago_mun, valor_pago_mun, placa_vista_mun
+            )
 
         return jsonify({
             "placa":       placa,
