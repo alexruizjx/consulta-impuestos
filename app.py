@@ -415,21 +415,26 @@ def consultar_runt_vehiculo(page, placa, cedula, tipo_documento="CC", job_id=Non
 
     # Los resultados vienen en varios paneles desplegables (Datos Tecnicos,
     # SOAT, RTM, Solicitudes, Garantias, etc.) -- solo el bloque principal
-    # de informacion general viene expandido por defecto. Hay que desplegar
-    # el resto o su texto queda oculto y no se puede leer.
+    # de informacion general viene expandido por defecto. Ademas, esos
+    # componentes se montan de forma asincrona DESPUES del bloque principal,
+    # asi que primero esperamos a que aparezcan antes de intentar desplegarlos.
     if job_id:
         job_actualizar(job_id, "Desplegando secciones del resultado...", "procesando")
 
-    for _ in range(3):  # unas cuantas pasadas, por si desplegar uno revela otros
+    try:
+        page.wait_for_selector('cyrconsultavehiculo-poliza-soat', timeout=15000)
+    except Exception:
+        pass
+
+    for _ in range(5):
         headers_colapsados = page.query_selector_all('mat-expansion-panel-header[aria-expanded="false"]')
-        if not headers_colapsados:
-            break
         for header in headers_colapsados:
             try:
                 header.click()
-                page.wait_for_timeout(250)
+                page.wait_for_timeout(300)
             except Exception:
                 pass
+        page.wait_for_timeout(500)  # dar tiempo a que aparezcan paneles que cargan tarde
 
     if job_id:
         job_actualizar(job_id, "Extrayendo datos...", "procesando")
@@ -446,7 +451,7 @@ def _texto_tras_label(texto_completo, etiqueta):
     falsos positivos). Si lo capturado a su vez contiene ':', es señal de
     que el campo real estaba vacio y se "comio" la siguiente etiqueta --
     en ese caso se trata como vacio en vez de devolver basura."""
-    patron = re.escape(etiqueta) + r"\s*:\s*\n?\s*([^\n]*)"
+    patron = re.escape(etiqueta).replace(r"\ ", r"\s+") + r"\s*:\s*\n?\s*([^\n]*)"
     m = re.search(patron, texto_completo, re.IGNORECASE)
     if not m:
         return ""
