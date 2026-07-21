@@ -2088,6 +2088,35 @@ def consultar_runt_vehiculo_endpoint():
     return jsonify({"job_id": job_id})
 
 
+@app.route("/vehiculo-runt-guardado", methods=["GET"])
+def vehiculo_runt_guardado():
+    """Trae los datos de RUNT ya guardados para una placa, sin consultar el
+    RUNT de nuevo (no tiene costo de 2Captcha). Se usa para que Tramy pueda
+    mostrar automaticamente lo que ya se sabe de un vehiculo, y que el
+    usuario decida si esta lo bastante reciente o prefiere consultar de nuevo."""
+    placa = request.args.get("placa", "").upper().strip()
+    if not placa:
+        return jsonify({"error": "Debes proporcionar la placa."}), 400
+    try:
+        conn = get_db_conn()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM vehiculos WHERE placa = %s", (placa,))
+        fila = cur.fetchone()
+        if not fila:
+            cur.close(); conn.close()
+            return jsonify(None)
+        columnas = [desc[0] for desc in cur.description]
+        datos = dict(zip(columnas, fila))
+        cur.close(); conn.close()
+        # Convertir fechas a texto para que se puedan mostrar en JSON
+        for k, v in datos.items():
+            if hasattr(v, "isoformat"):
+                datos[k] = str(v)
+        return jsonify(datos)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/consultar/estado", methods=["GET"])
 def consultar_estado():
     job_id = request.args.get("job_id", "").strip()
