@@ -413,20 +413,25 @@ def consultar_runt_vehiculo(page, placa, cedula, tipo_documento="CC", job_id=Non
 
         break
 
-    # Los resultados vienen en varios paneles desplegables (Datos Tecnicos,
-    # SOAT, RTM, Solicitudes, Garantias, etc.) -- solo el bloque principal
-    # de informacion general viene expandido por defecto. Ademas, esos
-    # componentes se montan de forma asincrona DESPUES del bloque principal,
-    # asi que primero esperamos a que aparezcan antes de intentar desplegarlos.
+    # Los paneles de SOAT, RTM, garantias, etc. cargan sus datos con
+    # peticiones asincronas separadas, despues de que aparece el bloque
+    # principal. Si leemos el texto antes de que esas peticiones terminen,
+    # esos campos salen vacios aunque el panel ya este expandido. Se espera
+    # a que la red quede inactiva (sin peticiones pendientes) antes de seguir.
     if job_id:
-        job_actualizar(job_id, "Desplegando secciones del resultado...", "procesando")
+        job_actualizar(job_id, "Esperando a que carguen todas las secciones...", "procesando")
 
     try:
-        page.wait_for_selector('cyrconsultavehiculo-poliza-soat', timeout=15000)
+        page.wait_for_load_state("networkidle", timeout=25000)
     except Exception:
         pass
 
-    for _ in range(5):
+    # Por si ademas hay paneles genuinamente colapsados (no solo cargando),
+    # los desplegamos tambien.
+    if job_id:
+        job_actualizar(job_id, "Desplegando secciones del resultado...", "procesando")
+
+    for _ in range(3):
         headers_colapsados = page.query_selector_all('mat-expansion-panel-header[aria-expanded="false"]')
         for header in headers_colapsados:
             try:
@@ -434,7 +439,7 @@ def consultar_runt_vehiculo(page, placa, cedula, tipo_documento="CC", job_id=Non
                 page.wait_for_timeout(300)
             except Exception:
                 pass
-        page.wait_for_timeout(500)  # dar tiempo a que aparezcan paneles que cargan tarde
+        page.wait_for_timeout(400)
 
     if job_id:
         job_actualizar(job_id, "Extrayendo datos...", "procesando")
