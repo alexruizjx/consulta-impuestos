@@ -2108,6 +2108,20 @@ def guardar_mi_consulta(user_id, placa, cedula):
         print(f"Error guardando mi_consulta: {e}")
 
 
+@app.route("/registrar-mi-consulta", methods=["GET"])
+def registrar_mi_consulta_endpoint():
+    """Registra en el historial personal del usuario que consulto esta
+    placa, SIN volver a scrapear el RUNT -- se usa cuando el dato vino del
+    cache global, para que igual quede en 'Mis vehiculos consultados'."""
+    user_id = request.args.get("user_id", "").strip()
+    placa   = request.args.get("placa", "").upper().strip()
+    cedula  = request.args.get("cedula", "").strip()
+    if not user_id or not placa:
+        return jsonify({"error": "Debes proporcionar user_id y placa."}), 400
+    guardar_mi_consulta(user_id, placa, cedula)
+    return jsonify({"ok": True})
+
+
 @app.route("/mis-vehiculos-runt", methods=["GET"])
 def mis_vehiculos_runt():
     """Historial personal: solo las placas que ESTE usuario ha consultado
