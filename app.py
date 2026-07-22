@@ -2104,8 +2104,10 @@ def guardar_mi_consulta(user_id, placa, cedula):
         """, (user_id, placa, cedula))
         conn.commit()
         cur.close(); conn.close()
+        return True, None
     except Exception as e:
         print(f"Error guardando mi_consulta: {e}")
+        return False, str(e)
 
 
 @app.route("/registrar-mi-consulta", methods=["GET"])
@@ -2118,8 +2120,8 @@ def registrar_mi_consulta_endpoint():
     cedula  = request.args.get("cedula", "").strip()
     if not user_id or not placa:
         return jsonify({"error": "Debes proporcionar user_id y placa."}), 400
-    guardar_mi_consulta(user_id, placa, cedula)
-    return jsonify({"ok": True})
+    ok, error = guardar_mi_consulta(user_id, placa, cedula)
+    return jsonify({"ok": ok, "error": error})
 
 
 @app.route("/mis-vehiculos-runt", methods=["GET"])
