@@ -9,7 +9,7 @@ import uuid
 import json
 import requests
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask import Flask, request, jsonify
 from playwright.sync_api import sync_playwright
 from flask_cors import CORS
@@ -2075,7 +2075,7 @@ def consultar_runt_vehiculo_endpoint():
                 return
 
             guardar_vehiculo_runt(datos)
-            datos["leido_en"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+            datos["leido_en"] = (datetime.now() - timedelta(hours=5)).strftime("%Y-%m-%d %H:%M")
             job_terminar(job_id, datos)
         except Exception as e:
             import traceback
@@ -2086,6 +2086,27 @@ def consultar_runt_vehiculo_endpoint():
     hilo.start()
 
     return jsonify({"job_id": job_id})
+
+
+@app.route("/vehiculos-buscar", methods=["GET"])
+def vehiculos_buscar():
+    """Autocompletado: devuelve placas guardadas que empiecen con el texto
+    escrito, para el campo de busqueda rapida en el frontend."""
+    prefijo = request.args.get("q", "").upper().strip()
+    if not prefijo:
+        return jsonify([])
+    try:
+        conn = get_db_conn()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT placa, marca, linea FROM vehiculos
+            WHERE placa LIKE %s ORDER BY leido_en DESC LIMIT 8
+        """, (prefijo + '%',))
+        filas = [{"placa": r[0], "marca": r[1], "linea": r[2]} for r in cur.fetchall()]
+        cur.close(); conn.close()
+        return jsonify(filas)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/vehiculo-runt-guardado", methods=["GET"])
@@ -2108,10 +2129,15 @@ def vehiculo_runt_guardado():
         columnas = [desc[0] for desc in cur.description]
         datos = dict(zip(columnas, fila))
         cur.close(); conn.close()
-        # Convertir fechas a texto para que se puedan mostrar en JSON
+        # Convertir fechas a texto para que se puedan mostrar en JSON.
+        # "leido_en" es la unica con hora (las demas son solo fecha), y se
+        # guarda en UTC -- se ajusta a hora de Colombia (UTC-5) para mostrar.
         for k, v in datos.items():
             if hasattr(v, "isoformat"):
-                datos[k] = str(v)
+                if k == "leido_en":
+                    datos[k] = (v - timedelta(hours=5)).strftime("%Y-%m-%d %H:%M")
+                else:
+                    datos[k] = str(v)
         return jsonify(datos)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
