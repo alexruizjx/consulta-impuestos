@@ -624,17 +624,20 @@ def _convertir_fecha_ddmmyyyy(fecha_str):
 
 
 def guardar_vehiculo_runt(datos):
-    """Guarda (o actualiza) los datos de un vehiculo consultado en el RUNT."""
+    """Guarda (o actualiza) los datos de un vehiculo consultado en el RUNT.
+    El RUNT siempre marca fuente='RUNT' y sobrescribe cualquier dato previo
+    que hubiera venido solo de una lectura por OCR."""
     try:
         conn = get_db_conn()
         cur = conn.cursor()
         # Los campos "_debug_*" son solo para diagnostico en pantalla, no
         # corresponden a columnas reales de la tabla.
         columnas = [k for k in datos.keys() if k != "placa" and not k.startswith("_debug")]
+        columnas.append("fuente")
         set_clause = ", ".join(f"{c}=EXCLUDED.{c}" for c in columnas)
         cols_sql = ", ".join(["placa"] + columnas + ["leido_en"])
         vals_sql = ", ".join(["%s"] * (len(columnas) + 2))
-        valores = [datos["placa"]] + [datos.get(c) for c in columnas] + [datetime.now()]
+        valores = [datos["placa"]] + [datos.get(c) for c in columnas[:-1]] + ["RUNT"] + [datetime.now()]
         cur.execute(f"""
             INSERT INTO vehiculos ({cols_sql})
             VALUES ({vals_sql})
@@ -2110,6 +2113,75 @@ def guardar_mi_consulta(user_id, placa, cedula):
         return False, str(e)
 
 
+@app.route("/guardar-vehiculo-ocr", methods=["POST"])
+def guardar_vehiculo_ocr():
+    """Guarda lo leido por OCR de una tarjeta de propiedad. Si esa placa ya
+    tenia datos de una consulta al RUNT, el RUNT prevalece: no se
+    sobrescriben marca/linea/modelo/etc, ni la fuente ni la fecha de
+    lectura -- solo se actualizan los campos que el RUNT NUNCA trae
+    (tipo de documento, cedula, nombre del propietario, municipio, y la
+    limitacion a la propiedad tal como la leyo el OCR)."""
+    data = request.get_json(silent=True) or {}
+    placa = (data.get("placa") or "").upper().strip()
+    if not placa:
+        return jsonify({"error": "Debes proporcionar placa."}), 400
+
+    user_id = (data.get("user_id") or "").strip()
+    cedula  = (data.get("cedula") or "").strip()
+
+    campos_ocr_siempre = ["municipio", "propietario_tipo_documento", "propietario_cedula", "propietario_nombre", "ocr_limitacion_propiedad"]
+    campos_ocr_si_no_hay_runt = ["clase", "marca", "linea", "modelo", "cilindrada", "servicio", "carroceria"]
+
+    valores = {
+        "municipio": data.get("municipio"),
+        "propietario_tipo_documento": data.get("tipo_documento"),
+        "propietario_cedula": cedula,
+        "propietario_nombre": data.get("apellidos"),
+        "ocr_limitacion_propiedad": data.get("limitacion_propiedad"),
+        "clase": data.get("clase"),
+        "marca": data.get("marca"),
+        "linea": data.get("linea"),
+        "modelo": data.get("modelo"),
+        "cilindrada": data.get("cilindrada"),
+        "servicio": data.get("servicio"),
+        "carroceria": data.get("carroceria"),
+    }
+
+    try:
+        conn = get_db_conn()
+        cur = conn.cursor()
+
+        todas_columnas = campos_ocr_siempre + campos_ocr_si_no_hay_runt
+        cols_sql = ", ".join(["placa"] + todas_columnas + ["fuente", "leido_en"])
+        vals_sql = ", ".join(["%s"] * (len(todas_columnas) + 3))
+        params = [placa] + [valores[c] for c in todas_columnas] + ["OCR", datetime.now()]
+
+        set_siempre = ", ".join(f"{c}=EXCLUDED.{c}" for c in campos_ocr_siempre)
+        set_condicional = ", ".join(
+            f"{c}=CASE WHEN vehiculos.fuente='RUNT' THEN vehiculos.{c} ELSE EXCLUDED.{c} END"
+            for c in campos_ocr_si_no_hay_runt
+        )
+
+        cur.execute(f"""
+            INSERT INTO vehiculos ({cols_sql})
+            VALUES ({vals_sql})
+            ON CONFLICT (placa) DO UPDATE SET
+                {set_siempre}, {set_condicional},
+                fuente = CASE WHEN vehiculos.fuente='RUNT' THEN 'RUNT' ELSE 'OCR' END,
+                leido_en = CASE WHEN vehiculos.fuente='RUNT' THEN vehiculos.leido_en ELSE EXCLUDED.leido_en END
+        """, params)
+        conn.commit()
+        cur.close(); conn.close()
+
+        if user_id:
+            guardar_mi_consulta(user_id, placa, cedula)
+
+        return jsonify({"ok": True})
+    except Exception as e:
+        print(f"Error guardando vehiculo OCR: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 @app.route("/registrar-mi-consulta", methods=["GET"])
 def registrar_mi_consulta_endpoint():
     """Registra en el historial personal del usuario que consulto esta
@@ -2139,7 +2211,7 @@ def mis_vehiculos_runt():
         cur = conn.cursor()
         if texto:
             cur.execute("""
-                SELECT v.placa, v.marca, v.linea, v.modelo, mc.actualizado_en
+                SELECT v.placa, v.marca, v.linea, v.modelo, mc.actualizado_en, v.fuente
                 FROM mis_consultas mc
                 JOIN vehiculos v ON v.placa = mc.placa
                 WHERE mc.user_id = %s AND v.placa LIKE %s
@@ -2147,7 +2219,7 @@ def mis_vehiculos_runt():
             """, (user_id, texto + '%'))
         else:
             cur.execute("""
-                SELECT v.placa, v.marca, v.linea, v.modelo, mc.actualizado_en
+                SELECT v.placa, v.marca, v.linea, v.modelo, mc.actualizado_en, v.fuente
                 FROM mis_consultas mc
                 JOIN vehiculos v ON v.placa = mc.placa
                 WHERE mc.user_id = %s
@@ -2158,6 +2230,7 @@ def mis_vehiculos_runt():
             filas.append({
                 "placa": r[0], "marca": r[1], "linea": r[2], "modelo": r[3],
                 "actualizado_en": (r[4] - timedelta(hours=5)).strftime("%Y-%m-%d %H:%M") if r[4] else None,
+                "fuente": r[5],
             })
         cur.close(); conn.close()
         return jsonify(filas)
