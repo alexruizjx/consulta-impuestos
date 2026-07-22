@@ -2048,6 +2048,7 @@ def consultar_runt_vehiculo_endpoint():
     placa  = request.args.get("placa", "").upper().strip()
     cedula = request.args.get("cedula", "").strip()
     tipo_documento = request.args.get("tipo_documento", "CC").strip().upper() or "CC"
+    user_id = request.args.get("user_id", "").strip()  # id del usuario en Supabase (opcional)
 
     if not placa or not cedula:
         return jsonify({"error": "Debes proporcionar placa y cedula."}), 400
@@ -2075,6 +2076,8 @@ def consultar_runt_vehiculo_endpoint():
                 return
 
             guardar_vehiculo_runt(datos)
+            if user_id:
+                guardar_mi_consulta(user_id, datos["placa"], cedula)
             datos["leido_en"] = (datetime.now() - timedelta(hours=5)).strftime("%Y-%m-%d %H:%M")
             job_terminar(job_id, datos)
         except Exception as e:
@@ -2086,6 +2089,53 @@ def consultar_runt_vehiculo_endpoint():
     hilo.start()
 
     return jsonify({"job_id": job_id})
+
+
+def guardar_mi_consulta(user_id, placa, cedula):
+    """Registra que este usuario en particular consulto esta placa (y
+    cedula), para el historial personal de 'Mis vehiculos consultados'."""
+    try:
+        conn = get_db_conn()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO mis_consultas (user_id, placa, cedula, actualizado_en)
+            VALUES (%s, %s, %s, NOW())
+            ON CONFLICT (user_id, placa, cedula) DO UPDATE SET actualizado_en = NOW()
+        """, (user_id, placa, cedula))
+        conn.commit()
+        cur.close(); conn.close()
+    except Exception as e:
+        print(f"Error guardando mi_consulta: {e}")
+
+
+@app.route("/mis-vehiculos-runt", methods=["GET"])
+def mis_vehiculos_runt():
+    """Historial personal: solo las placas que ESTE usuario ha consultado
+    en el RUNT antes (a diferencia de /vehiculo-runt-guardado, que es
+    global para todos los usuarios)."""
+    user_id = request.args.get("user_id", "").strip()
+    if not user_id:
+        return jsonify({"error": "Debes proporcionar user_id."}), 400
+    try:
+        conn = get_db_conn()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT v.placa, v.marca, v.linea, v.modelo, mc.actualizado_en
+            FROM mis_consultas mc
+            JOIN vehiculos v ON v.placa = mc.placa
+            WHERE mc.user_id = %s
+            ORDER BY mc.actualizado_en DESC LIMIT 20
+        """, (user_id,))
+        filas = []
+        for r in cur.fetchall():
+            filas.append({
+                "placa": r[0], "marca": r[1], "linea": r[2], "modelo": r[3],
+                "actualizado_en": (r[4] - timedelta(hours=5)).strftime("%Y-%m-%d %H:%M") if r[4] else None,
+            })
+        cur.close(); conn.close()
+        return jsonify(filas)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/vehiculos-buscar", methods=["GET"])
