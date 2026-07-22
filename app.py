@@ -2128,20 +2128,31 @@ def registrar_mi_consulta_endpoint():
 def mis_vehiculos_runt():
     """Historial personal: solo las placas que ESTE usuario ha consultado
     en el RUNT antes (a diferencia de /vehiculo-runt-guardado, que es
-    global para todos los usuarios)."""
+    global para todos los usuarios). Acepta 'q' opcional para filtrar por
+    placa mientras el usuario escribe (la lista puede crecer mucho)."""
     user_id = request.args.get("user_id", "").strip()
+    texto   = request.args.get("q", "").upper().strip()
     if not user_id:
         return jsonify({"error": "Debes proporcionar user_id."}), 400
     try:
         conn = get_db_conn()
         cur = conn.cursor()
-        cur.execute("""
-            SELECT v.placa, v.marca, v.linea, v.modelo, mc.actualizado_en
-            FROM mis_consultas mc
-            JOIN vehiculos v ON v.placa = mc.placa
-            WHERE mc.user_id = %s
-            ORDER BY mc.actualizado_en DESC LIMIT 20
-        """, (user_id,))
+        if texto:
+            cur.execute("""
+                SELECT v.placa, v.marca, v.linea, v.modelo, mc.actualizado_en
+                FROM mis_consultas mc
+                JOIN vehiculos v ON v.placa = mc.placa
+                WHERE mc.user_id = %s AND v.placa LIKE %s
+                ORDER BY mc.actualizado_en DESC LIMIT 8
+            """, (user_id, texto + '%'))
+        else:
+            cur.execute("""
+                SELECT v.placa, v.marca, v.linea, v.modelo, mc.actualizado_en
+                FROM mis_consultas mc
+                JOIN vehiculos v ON v.placa = mc.placa
+                WHERE mc.user_id = %s
+                ORDER BY mc.actualizado_en DESC LIMIT 8
+            """, (user_id,))
         filas = []
         for r in cur.fetchall():
             filas.append({
