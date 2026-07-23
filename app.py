@@ -413,6 +413,17 @@ def consultar_runt_vehiculo(page, placa, cedula, tipo_documento="CC", job_id=Non
 
         break
 
+    # Si el RUNT muestra cualquier otro error (ej. "los datos registrados
+    # no corresponden con los propietarios activos"), se propaga el mensaje
+    # real en vez de seguir intentando adivinar por que fallo.
+    error_popup = page.query_selector('.swal2-popup')
+    if error_popup:
+        texto_error = error_popup.inner_text().strip()
+        if texto_error:
+            if page.query_selector('.swal2-confirm'):
+                page.click('.swal2-confirm')
+            raise Exception(texto_error)
+
     # Los paneles de SOAT, RTM, garantias, etc. cargan sus datos con
     # peticiones asincronas separadas, despues de que aparece el bloque
     # principal. Si leemos el texto antes de que esas peticiones terminen,
