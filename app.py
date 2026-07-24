@@ -733,26 +733,36 @@ FUN_PLANTILLA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "AppJX.
 
 VERDE_MARCA = PatternFill(start_color="92D050", end_color="92D050", fill_type="solid")
 
+# Cada opcion marca DOS celdas: el numero/casilla y la etiqueta de texto,
+# para que la seleccion se vea claramente (no solo el numero).
 CELDAS_TRAMITE = {
-    "MATRICULA/ REGISTRO": "A7", "TRASPASO": "E7", "TRASLADO MATRICULA / REGISTRO": "I7",
-    "RADICADO  MATRICULA / REGISTRO": "N7", "CAMBIO DE COLOR": "Q7", "CAMBIO DE SERVICIO": "T7",
-    "REGRABAR MOTOR": "A9", "REGRABAR CHASIS": "E9", "TRANSFORMACION": "I9",
-    "DUPLICADO LICENCIA TRANSITO": "N9", "INSCRIPC. PRENDA": "Q9", "LEVANTA PRENDA": "T9",
-    "CANCELACION MATRICULA / REGISTRO": "A12", "CAMBIO DE PLACAS": "E12", "DUPLICADO DE PLACAS": "I12",
-    "REMATRICULA": "N12", "CAMBIO DE CARROCERIA": "Q12", "OTROS": "T12",
+    "MATRICULA/ REGISTRO": ("A7", "B7"), "TRASPASO": ("E7", "F7"),
+    "TRASLADO MATRICULA / REGISTRO": ("I7", "J7"), "RADICADO  MATRICULA / REGISTRO": ("N7", "O7"),
+    "CAMBIO DE COLOR": ("Q7", "R7"), "CAMBIO DE SERVICIO": ("T7", "U7"),
+    "REGRABAR MOTOR": ("A9", "B9"), "REGRABAR CHASIS": ("E9", "F9"), "TRANSFORMACION": ("I9", "J9"),
+    "DUPLICADO LICENCIA TRANSITO": ("N9", "O9"), "INSCRIPC. PRENDA": ("Q9", "R9"), "LEVANTA PRENDA": ("T9", "U9"),
+    "CANCELACION MATRICULA / REGISTRO": ("A12", "B12"), "CAMBIO DE PLACAS": ("E12", "F12"),
+    "DUPLICADO DE PLACAS": ("I12", "J12"), "REMATRICULA": ("N12", "O12"),
+    "CAMBIO DE CARROCERIA": ("Q12", "R12"),
 }
+# "OTROS" ya no vive aqui -- se marca aparte, solo cuando hay traslado (ver mas abajo)
+CELDA_OTROS_TRAMITE = ("T12", "U12")
+
 CELDAS_CLASE = {
-    "AUTOMOVIL": "A17", "BUS": "D17", "BUSETA": "H17", "CAMION": "L17", "CAMIONETA": "O17",
-    "CAMPERO": "P17", "MICROBUS": "S17", "TRACTOCAMION": "A19", "MOTOCICLETA": "D19",
-    "MOTOCARRO": "H19", "MOTOTRICICLO": "L19", "CUATRIMOTO": "O19", "VOLQUETA": "P19", "OTRO": "S19",
+    "AUTOMOVIL": ("A17", "A16"), "BUS": ("D17", "D16"), "BUSETA": ("H17", "H16"),
+    "CAMION": ("L17", "L16"), "CAMIONETA": ("O17", "O16"), "CAMPERO": ("P17", "P16"),
+    "MICROBUS": ("S17", "S16"), "TRACTOCAMION": ("A19", "A18"), "MOTOCICLETA": ("D19", "D18"),
+    "MOTOCARRO": ("H19", "H18"), "MOTOTRICICLO": ("L19", "L18"), "CUATRIMOTO": ("O19", "O18"),
+    "VOLQUETA": ("P19", "P18"), "OTRO": ("S19", "S18"),
 }
 CELDAS_COMBUSTIBLE = {
-    "GASOLINA": "AC8", "DIESEL": "AE8", "GAS": "AF8", "MIXTO": "AG8",
-    "ELECTRICO": "AH8", "HIDROGENO": "AI8", "ETANOL": "AJ8", "BIODIESEL": "AK8",
+    "GASOLINA": ("AC8", "AC7"), "DIESEL": ("AE8", "AE7"), "GAS": ("AF8", "AF7"),
+    "MIXTO": ("AG8", "AG7"), "ELECTRICO": ("AH8", "AH7"), "HIDROGENO": ("AI8", "AI7"),
+    "ETANOL": ("AJ8", "AJ7"), "BIODIESEL": ("AK8", "AK7"),
 }
 CELDAS_SERVICIO = {
-    "PARTICULAR": "AE29", "PUBLICO": "AF29", "DIPLOMATICO": "AG29",
-    "OFICIAL": "AH29", "ESPECIAL": "AI29", "OTROS": "AJ29",
+    "PARTICULAR": ("AE29", "AE28"), "PUBLICO": ("AF29", "AF28"), "DIPLOMATICO": ("AG29", "AG28"),
+    "OFICIAL": ("AH29", "AH28"), "ESPECIAL": ("AI29", "AI28"), "OTROS": ("AJ29", "AJ28"),
 }
 CELDAS_REFERENCIA_SIMPLE = {
     "AJ3": "placa", "W7": "marca", "Z7": "linea", "W10": "color",
@@ -777,19 +787,25 @@ def _fun_normalizar(texto):
 
 
 def _fun_coincide(valor_tramy, etiqueta_formulario):
+    """Compara por PALABRA COMPLETA (no por 'contiene'), para que por ejemplo
+    'GAS' no haga match por accidente dentro de 'GASOLINA'."""
     a, b = _fun_normalizar(valor_tramy), _fun_normalizar(etiqueta_formulario)
     if not a or not b:
         return False
-    return a == b or a in b or b in a
+    if a == b:
+        return True
+    return re.search(r"\b" + re.escape(b) + r"\b", a) is not None
 
 
-def _fun_marcar_checkbox(ws, mapa_celdas, valor_tramy):
+def _fun_marcar_checkboxes(ws, mapa_celdas, valor_tramy):
+    """Marca TODAS las opciones que coincidan (no solo la primera) -- un
+    vehiculo de combustible dual (ej. 'GASOLINA Y GAS') debe marcar ambas."""
     if not valor_tramy:
         return
-    for etiqueta, celda in mapa_celdas.items():
+    for etiqueta, celdas in mapa_celdas.items():
         if _fun_coincide(valor_tramy, etiqueta):
-            ws[celda].fill = VERDE_MARCA
-            return
+            for celda in celdas:
+                ws[celda].fill = VERDE_MARCA
 
 
 def generar_fun(datos, ruta_salida_pdf):
@@ -849,10 +865,16 @@ def generar_fun(datos, ruta_salida_pdf):
         if not datos.get(clave):
             formulario[celda] = ""
 
-    _fun_marcar_checkbox(formulario, CELDAS_TRAMITE, datos.get("tramite", ""))
-    _fun_marcar_checkbox(formulario, CELDAS_CLASE, datos.get("clase", ""))
-    _fun_marcar_checkbox(formulario, CELDAS_COMBUSTIBLE, datos.get("combustible", ""))
-    _fun_marcar_checkbox(formulario, CELDAS_SERVICIO, datos.get("servicio", ""))
+    _fun_marcar_checkboxes(formulario, CELDAS_TRAMITE, datos.get("tramite", ""))
+    _fun_marcar_checkboxes(formulario, CELDAS_CLASE, datos.get("clase", ""))
+    _fun_marcar_checkboxes(formulario, CELDAS_COMBUSTIBLE, datos.get("combustible", ""))
+    _fun_marcar_checkboxes(formulario, CELDAS_SERVICIO, datos.get("servicio", ""))
+
+    # "OTROS" (en Tramite Solicitado) NO depende del tramite elegido -- se
+    # marca unica y exclusivamente cuando hay un traslado de cuenta.
+    if datos.get("traslado_municipio"):
+        for celda in CELDA_OTROS_TRAMITE:
+            formulario[celda].fill = VERDE_MARCA
 
     formulario["A51"] = ""  # pie de pagina "Juridicox.com..." -- se quita
 
