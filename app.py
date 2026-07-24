@@ -9,6 +9,8 @@ import uuid
 import json
 import requests
 import threading
+import boto3
+from botocore.config import Config
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify
 from playwright.sync_api import sync_playwright
@@ -22,6 +24,36 @@ MSG_NO_MATRICULADO = "El vehiculo no se encuentra matriculado en la Secretaria d
 AÑO_ACTUAL = str(datetime.now().year)
 
 TWOCAPTCHA_API_KEY = os.environ.get("TWOCAPTCHA_API_KEY", "")
+
+# --- Cloudflare R2 (almacenamiento de documentos generados, ej. FUN) ---
+R2_ACCESS_KEY_ID = os.environ.get("R2_ACCESS_KEY_ID", "")
+R2_SECRET_ACCESS_KEY = os.environ.get("R2_SECRET_ACCESS_KEY", "")
+R2_ENDPOINT = os.environ.get("R2_ENDPOINT", "")
+R2_BUCKET_NAME = os.environ.get("R2_BUCKET_NAME", "")
+R2_PUBLIC_BASE_URL = os.environ.get("R2_PUBLIC_BASE_URL", "")  # ej: https://docs.tramy.app
+
+def _r2_client():
+    return boto3.client(
+        "s3",
+        endpoint_url=R2_ENDPOINT,
+        aws_access_key_id=R2_ACCESS_KEY_ID,
+        aws_secret_access_key=R2_SECRET_ACCESS_KEY,
+        config=Config(signature_version="s3v4"),
+        region_name="auto",
+    )
+
+def subir_a_r2(ruta_local, nombre_archivo_remoto, content_type="application/pdf"):
+    """Sube un archivo a R2 y devuelve la URL publica de descarga.
+    El bucket debe tener acceso publico de lectura habilitado (o un dominio
+    personalizado conectado) para que la URL funcione directo en el navegador."""
+    cliente = _r2_client()
+    cliente.upload_file(
+        ruta_local, R2_BUCKET_NAME, nombre_archivo_remoto,
+        ExtraArgs={"ContentType": content_type}
+    )
+    return f"{R2_PUBLIC_BASE_URL}/{nombre_archivo_remoto}"
+
+
 EMTRASUR_SITE_KEY  = "6Leshn4sAAAAAIas9tkeW3vKPg0a4uYqw-7fG7Pn"
 EMTRASUR_URL       = "https://sistematizacion.emtrasur.com.co/"
 ANTIOQUIA_SITE_KEY = "0x4AAAAAACJy_BR2tRNN1cnv"
@@ -686,6 +718,168 @@ def guardar_vehiculo_runt(datos):
         print(f"  → Vehiculo RUNT guardado: {datos['placa']}")
     except Exception as e:
         print(f"Error guardando vehiculo RUNT: {e}")
+
+
+import unicodedata
+import subprocess
+import shutil
+from openpyxl.styles import PatternFill, Alignment
+import openpyxl as _openpyxl
+
+# --- Generador de FUN (Formulario Unico Nacional) ---
+# La plantilla debe subirse al repositorio junto a app.py, con este mismo
+# nombre exacto ("AppJX.xlsm"), en el mismo directorio.
+FUN_PLANTILLA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "AppJX.xlsm")
+
+VERDE_MARCA = PatternFill(start_color="92D050", end_color="92D050", fill_type="solid")
+
+CELDAS_TRAMITE = {
+    "MATRICULA/ REGISTRO": "A7", "TRASPASO": "E7", "TRASLADO MATRICULA / REGISTRO": "I7",
+    "RADICADO  MATRICULA / REGISTRO": "N7", "CAMBIO DE COLOR": "Q7", "CAMBIO DE SERVICIO": "T7",
+    "REGRABAR MOTOR": "A9", "REGRABAR CHASIS": "E9", "TRANSFORMACION": "I9",
+    "DUPLICADO LICENCIA TRANSITO": "N9", "INSCRIPC. PRENDA": "Q9", "LEVANTA PRENDA": "T9",
+    "CANCELACION MATRICULA / REGISTRO": "A12", "CAMBIO DE PLACAS": "E12", "DUPLICADO DE PLACAS": "I12",
+    "REMATRICULA": "N12", "CAMBIO DE CARROCERIA": "Q12", "OTROS": "T12",
+}
+CELDAS_CLASE = {
+    "AUTOMOVIL": "A17", "BUS": "D17", "BUSETA": "H17", "CAMION": "L17", "CAMIONETA": "O17",
+    "CAMPERO": "P17", "MICROBUS": "S17", "TRACTOCAMION": "A19", "MOTOCICLETA": "D19",
+    "MOTOCARRO": "H19", "MOTOTRICICLO": "L19", "CUATRIMOTO": "O19", "VOLQUETA": "P19", "OTRO": "S19",
+}
+CELDAS_COMBUSTIBLE = {
+    "GASOLINA": "AC8", "DIESEL": "AE8", "GAS": "AF8", "MIXTO": "AG8",
+    "ELECTRICO": "AH8", "HIDROGENO": "AI8", "ETANOL": "AJ8", "BIODIESEL": "AK8",
+}
+CELDAS_SERVICIO = {
+    "PARTICULAR": "AE29", "PUBLICO": "AF29", "DIPLOMATICO": "AG29",
+    "OFICIAL": "AH29", "ESPECIAL": "AI29", "OTROS": "AJ29",
+}
+CELDAS_REFERENCIA_SIMPLE = {
+    "AJ3": "placa", "W7": "marca", "Z7": "linea", "W10": "color",
+    "AG10": "modelo", "AI10": "cilindrada", "W13": "capacidad",
+    "AE17": "numero_motor", "W19": "carroceria", "AE19": "numero_chasis",
+    "AE22": "numero_serie", "AE24": "vin",
+    "A24": "propietario_primer_apellido", "I24": "propietario_segundo_apellido",
+    "P24": "propietario_nombres", "S26": "propietario_documento",
+    "A29": "propietario_direccion", "M29": "propietario_ciudad", "S29": "propietario_telefono",
+    "A37": "comprador_primer_apellido", "I37": "comprador_segundo_apellido",
+    "P37": "comprador_nombres", "S41": "comprador_documento",
+    "A44": "comprador_direccion", "M44": "comprador_ciudad", "S44": "comprador_telefono",
+    "AG41": "traslado_municipio",
+}
+
+
+def _fun_normalizar(texto):
+    if not texto:
+        return ""
+    texto = str(texto).upper().strip()
+    return "".join(c for c in unicodedata.normalize("NFD", texto) if unicodedata.category(c) != "Mn")
+
+
+def _fun_coincide(valor_tramy, etiqueta_formulario):
+    a, b = _fun_normalizar(valor_tramy), _fun_normalizar(etiqueta_formulario)
+    if not a or not b:
+        return False
+    return a == b or a in b or b in a
+
+
+def _fun_marcar_checkbox(ws, mapa_celdas, valor_tramy):
+    if not valor_tramy:
+        return
+    for etiqueta, celda in mapa_celdas.items():
+        if _fun_coincide(valor_tramy, etiqueta):
+            ws[celda].fill = VERDE_MARCA
+            return
+
+
+def generar_fun(datos, ruta_salida_pdf):
+    """Genera el FUN diligenciado en PDF a partir de la plantilla Excel real
+    (FORMULARIO + EXPORTAR), con las casillas marcadas en verde."""
+    wb = _openpyxl.load_workbook(FUN_PLANTILLA, data_only=False, keep_vba=True)
+    exportar = wb["EXPORTAR"]
+    formulario = wb["FORMULARIO"]
+
+    for row in formulario.iter_rows():
+        for cell in row:
+            if isinstance(cell.value, str) and "[1]EXPORTAR!" in cell.value:
+                cell.value = cell.value.replace("[1]EXPORTAR!", "EXPORTAR!")
+            elif isinstance(cell.value, str) and "[1]DATOS!" in cell.value:
+                cell.value = cell.value.replace("[1]DATOS!", "DATOS!")
+
+    exportar["D8"] = datos.get("propietario_nombres", "")
+    exportar["D9"] = datos.get("propietario_primer_apellido", "")
+    exportar["D10"] = datos.get("propietario_segundo_apellido", "")
+    exportar["D11"] = datos.get("propietario_documento", "")
+    exportar["D12"] = datos.get("propietario_direccion", "")
+    exportar["D13"] = datos.get("propietario_ciudad", "")
+    exportar["D14"] = datos.get("propietario_telefono", "")
+    exportar["D16"] = datos.get("comprador_nombres", "")
+    exportar["D17"] = datos.get("comprador_primer_apellido", "")
+    exportar["D18"] = datos.get("comprador_segundo_apellido", "")
+    exportar["D19"] = datos.get("comprador_documento", "")
+    exportar["D20"] = datos.get("comprador_direccion", "")
+    exportar["D21"] = datos.get("comprador_ciudad", "")
+    exportar["D22"] = datos.get("comprador_telefono", "")
+    exportar["D27"] = datos.get("placa", "")
+    exportar["D28"] = datos.get("servicio", "")
+    exportar["D29"] = datos.get("clase", "")
+    exportar["D30"] = datos.get("marca", "")
+    exportar["D31"] = datos.get("linea", "")
+    exportar["D32"] = datos.get("modelo", "")
+    exportar["D33"] = datos.get("color", "")
+    exportar["D34"] = datos.get("numero_serie", "")
+    exportar["D35"] = datos.get("numero_motor", "")
+    exportar["D36"] = datos.get("numero_chasis", "")
+    exportar["D37"] = datos.get("cilindrada", "")
+    exportar["D38"] = datos.get("carroceria", "")
+    exportar["D39"] = datos.get("combustible", "")
+    exportar["D40"] = datos.get("autoridad_transito", "")
+    exportar["D41"] = datos.get("capacidad", "")
+    exportar["D42"] = datos.get("vin", "")
+    exportar["D43"] = "SI" if datos.get("gravamenes_propiedad") else "NO"
+    exportar["D44"] = datos.get("fecha_matricula_inicial", "")
+    exportar["D47"] = datos.get("tramite", "")
+    exportar["D51"] = datos.get("traslado_municipio", "")
+
+    formulario["AC2"] = datos.get("autoridad_transito", "")
+    formulario["AC2"].alignment = Alignment(horizontal="center", vertical="center")
+    formulario["AA4"] = datos.get("municipio", "")
+
+    for celda, clave in CELDAS_REFERENCIA_SIMPLE.items():
+        if not datos.get(clave):
+            formulario[celda] = ""
+
+    _fun_marcar_checkbox(formulario, CELDAS_TRAMITE, datos.get("tramite", ""))
+    _fun_marcar_checkbox(formulario, CELDAS_CLASE, datos.get("clase", ""))
+    _fun_marcar_checkbox(formulario, CELDAS_COMBUSTIBLE, datos.get("combustible", ""))
+    _fun_marcar_checkbox(formulario, CELDAS_SERVICIO, datos.get("servicio", ""))
+
+    formulario["A51"] = ""  # pie de pagina "Juridicox.com..." -- se quita
+
+    hojas_a_conservar = {"FORMULARIO", "EXPORTAR", "DATOS"}
+    for nombre in list(wb.sheetnames):
+        if nombre not in hojas_a_conservar:
+            del wb[nombre]
+    formulario.sheet_state = "visible"
+    wb.active = wb.sheetnames.index("FORMULARIO")
+
+    formulario.print_area = "A1:AY47"
+    formulario.page_setup.orientation = "landscape"
+    formulario.page_setup.paperSize = formulario.PAPERSIZE_LETTER
+    formulario.page_setup.scale = 100
+
+    id_temp = str(uuid.uuid4())[:8]
+    ruta_xlsm_temp = f"/tmp/_fun_{id_temp}.xlsm"
+    wb.save(ruta_xlsm_temp)
+
+    subprocess.run([
+        "soffice", "--headless", "--convert-to", "pdf",
+        "--outdir", os.path.dirname(ruta_salida_pdf), ruta_xlsm_temp
+    ], check=True, timeout=90)
+
+    generado = os.path.join(os.path.dirname(ruta_salida_pdf), f"_fun_{id_temp}.pdf")
+    shutil.move(generado, ruta_salida_pdf)
+    os.remove(ruta_xlsm_temp)
 
 
 def bloquear_recursos(page):
@@ -2217,6 +2411,34 @@ def guardar_vehiculo_ocr():
         return jsonify({"ok": True})
     except Exception as e:
         print(f"Error guardando vehiculo OCR: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/generar-fun", methods=["POST"])
+def generar_fun_endpoint():
+    """Genera el FUN diligenciado con los datos recibidos, lo sube a R2, y
+    devuelve el enlace de descarga. Recibe todo por POST (no se re-consulta
+    la base de datos) porque el frontend ya tiene en pantalla justo los
+    datos que el usuario confirmo -- incluyendo cosas que no vivimos en
+    'vehiculos' (tramite elegido, datos del comprador, etc.)."""
+    datos = request.get_json(silent=True) or {}
+    placa = (datos.get("placa") or "SINPLACA").upper().strip()
+
+    if not os.path.exists(FUN_PLANTILLA):
+        return jsonify({"error": "No se encontro la plantilla AppJX.xlsm en el servidor."}), 500
+
+    id_doc = str(uuid.uuid4())[:10]
+    ruta_pdf_local = f"/tmp/FUN_{placa}_{id_doc}.pdf"
+
+    try:
+        generar_fun(datos, ruta_pdf_local)
+        nombre_remoto = f"fun/{placa}_{id_doc}.pdf"
+        url = subir_a_r2(ruta_pdf_local, nombre_remoto)
+        os.remove(ruta_pdf_local)
+        return jsonify({"ok": True, "url": url})
+    except Exception as e:
+        import traceback
+        print(traceback.format_exc(), flush=True)
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
