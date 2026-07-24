@@ -6,3 +6,5 @@ requests
 psycopg2-binary
 pytesseract
 Pillow
+boto3
+openpyxl
