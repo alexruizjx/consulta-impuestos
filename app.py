@@ -2414,23 +2414,6 @@ def guardar_vehiculo_ocr():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
-@app.route("/debug-r2-config", methods=["GET"])
-def debug_r2_config():
-    """Endpoint temporal: confirma si las variables de R2 estan llegando al
-    codigo, sin mostrar los valores secretos completos. Quitar despues."""
-    def resumen(valor):
-        if not valor:
-            return "VACIA"
-        return f"presente ({len(valor)} caracteres, empieza con '{valor[:6]}...')"
-    return jsonify({
-        "R2_ACCESS_KEY_ID": resumen(R2_ACCESS_KEY_ID),
-        "R2_SECRET_ACCESS_KEY": resumen(R2_SECRET_ACCESS_KEY),
-        "R2_ENDPOINT": resumen(R2_ENDPOINT),
-        "R2_BUCKET_NAME": resumen(R2_BUCKET_NAME),
-        "R2_PUBLIC_BASE_URL": resumen(R2_PUBLIC_BASE_URL),
-    })
-
-
 @app.route("/generar-fun", methods=["POST"])
 def generar_fun_endpoint():
     """Genera el FUN diligenciado con los datos recibidos, lo sube a R2, y
