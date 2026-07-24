@@ -1,9 +1,8 @@
 FROM mcr.microsoft.com/playwright/python:v1.61.0-jammy
 WORKDIR /app
-RUN apt-get update && apt-get install -y --fix-missing tesseract-ocr tesseract-ocr-spa || apt-get install -y --fix-missing tesseract-ocr tesseract-ocr-spa
+RUN apt-get update && apt-get install -y --fix-missing tesseract-ocr tesseract-ocr-spa libreoffice || apt-get install -y --fix-missing tesseract-ocr tesseract-ocr-spa libreoffice
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 COPY . .
 EXPOSE 8080
 CMD ["gunicorn", "app:app", "--bind", "0.0.0.0:8080", "--timeout", "700", "--graceful-timeout", "700", "--workers", "1"]
-
